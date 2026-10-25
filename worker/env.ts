@@ -16,6 +16,10 @@ export interface Env {
   SEARCH_PROVIDER?: string
   /** Secret. Exa key for the backup web search. */
   EXA_API_KEY?: string
+  /** Secret. Neon Postgres connection string for the /rudao manual. */
+  DATABASE_URL?: string
+  /** Optional override password for /rudao. */
+  RUDAO_PASSWORD?: string
 }
 
 export interface Byok {

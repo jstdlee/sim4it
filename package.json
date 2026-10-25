@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@fortawesome/fontawesome-free": "^6.7.2",
+    "@neondatabase/serverless": "^1.2.0",
     "agents": "latest",
     "dompurify": "^3.4.16",
     "hono": "^4.6.0",

@@ -65,6 +65,11 @@ const RAYS = Array.from({ length: 36 }, (_, i) => {
         <RouterLink class="btn" to="/moments">Open</RouterLink>
         <FoxSticker class="stamp" pose="surprised" :size="64" />
       </li>
+      <li class="rung final">
+        <span class="n"><i class="fa-solid fa-book-open" aria-hidden="true" /></span>
+        <div class="grow"><h2>《交易入道》· 概念术语与实操手册</h2><p class="muted">Jesse Lau (@jesselaunz) 闲云九法、103条书签原推汇编、实操 SOP 与读书批注索引。</p></div>
+        <a class="btn" href="/rudao">Open</a>
+      </li>
     </ol>
   </div>
 </template>

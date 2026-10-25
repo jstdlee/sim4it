@@ -62,12 +62,14 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 
     <nav v-if="app.authed && !collapsed" class="links" aria-label="Main">
       <RouterLink v-for="[to, label] in links" :key="to" :to="to" class="nav">{{ label }}</RouterLink>
+      <a href="/rudao" class="nav">交易入道</a>
     </nav>
     <span v-else class="spacer" />
     <!-- Invisible copy used only to measure the width the links need. -->
-    <div ref="measure" class="links measure" aria-hidden="true"><span v-for="[to, label] in links" :key="to" class="nav">{{ label }}</span></div>
+    <div ref="measure" class="links measure" aria-hidden="true"><span v-for="[to, label] in links" :key="to" class="nav">{{ label }}</span><span class="nav">交易入道</span></div>
 
     <div ref="cluster" class="cluster" role="toolbar" aria-label="App">
+      <a v-if="!app.authed" href="/rudao" class="nav">交易入道</a>
       <SearchPalette v-if="app.authed" />
       <LangPicker />
       <RouterLink v-if="app.authed" to="/settings" class="icon-btn" aria-label="Settings" title="Settings"><i class="fa-solid fa-gear" /></RouterLink>
@@ -85,6 +87,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
         </div>
         <nav aria-label="Main">
           <RouterLink v-for="[to, label, icon] in links" :key="to" :to="to" class="dlink"><i :class="['fa-solid', 'fa-fw', icon]" aria-hidden="true" />{{ label }}</RouterLink>
+          <a href="/rudao" class="dlink"><i class="fa-solid fa-fw fa-book-open" aria-hidden="true" />交易入道 · 手册</a>
           <RouterLink to="/settings" class="dlink"><i class="fa-solid fa-fw fa-gear" aria-hidden="true" />Settings</RouterLink>
         </nav>
       </aside>

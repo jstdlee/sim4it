@@ -6,6 +6,7 @@ import { lookup, store } from './cache'
 import { webSearch } from './search'
 import { listModels } from './models'
 import { isAuthed, isConfigured, login, logoutCookie } from './auth'
+import { handleRudaoRequest } from './rudao'
 export { TutorAgent } from './agent'
 
 const app = new Hono<{ Bindings: Env }>()
@@ -121,6 +122,9 @@ const PUBLIC = new Set(['/api/health', '/api/login', '/api/logout', '/api/sessio
 export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext) {
     const url = new URL(req.url)
+    if (url.pathname === '/rudao' || url.pathname.startsWith('/rudao/')) {
+      return handleRudaoRequest(req, env)
+    }
     const isApi = url.pathname.startsWith('/api/') || url.pathname.startsWith('/agents/')
     if (isApi && !PUBLIC.has(url.pathname) && !(await isAuthed(req, env))) {
       return Response.json({ ok: false, error: 'Sign in with your access token.' }, { status: 401 })
