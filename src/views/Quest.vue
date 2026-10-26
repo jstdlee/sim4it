@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { BANK, LEVELS, TERM_MAP } from '../lib/content'
+import { useDomainPack, GLOBAL_TERM_MAP } from '../lib/content'
 import TermText from '../components/TermText.vue'
 import StepPlayer from '../components/StepPlayer.vue'
 import PayoffChart from '../components/PayoffChart.vue'
@@ -9,17 +9,19 @@ import { useApp } from '../stores/app'
 import FoxSticker from '../components/FoxSticker.vue'
 
 const route = useRoute(), router = useRouter(), app = useApp()
+const pack = useDomainPack()
 const level = computed(() => Number(route.params.level))
-const i = computed(() => Number(route.params.i))
-const list = computed(() => BANK[level.value] ?? [])
+const i = computed(() => Number(route.params.idx ?? route.params.i ?? 0))
+const list = computed(() => pack.value.bank[level.value] ?? [])
 const q = computed(() => list.value[i.value])
-const meta = computed(() => LEVELS.find((l) => l.n === level.value))
+const meta = computed(() => pack.value.levels.find((l) => l.n === level.value))
 const showChart = ref(false)
 
 const go = (d: number) => {
   const n = i.value + d
   if (n >= 0 && n < list.value.length) router.push(`/quest/${level.value}/${n}`)
-  else if (n >= list.value.length && BANK[level.value + 1]) router.push(`/quest/${level.value + 1}/0`)
+  else if (n >= list.value.length && pack.value.bank[level.value + 1]) router.push(`/quest/${level.value + 1}/0`)
+  else router.push('/journey')
 }
 const onKey = (e: KeyboardEvent) => {
   if ((e.target as HTMLElement)?.closest('input,textarea') || app.openTerm || app.chatOpen) return
@@ -38,7 +40,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 <template>
   <div class="wrap narrow" @touchstart.passive="ts" @touchend.passive="te">
     <nav class="crumbs muted" aria-label="Breadcrumb">
-      <RouterLink to="/">Journey</RouterLink> / Level {{ level }} · {{ meta?.name }} / {{ i + 1 }} of {{ list.length }}
+      <RouterLink to="/journey">{{ pack.brand }} · Journey</RouterLink> / Level {{ level }} · {{ meta?.name }} <span v-if="meta?.zh">({{ meta.zh }})</span> / {{ i + 1 }} of {{ list.length }}
     </nav>
     <template v-if="q">
       <div class="head">
@@ -59,7 +61,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 
       <section class="review">
         <h3>Terms in this question</h3>
-        <div class="row"><button v-for="t in q.terms" :key="t" class="chip" @click="app.openTerm = t">{{ TERM_MAP[t]?.name ?? t }}</button></div>
+        <div class="row"><button v-for="t in q.terms" :key="t" class="chip" @click="app.openTerm = t">{{ pack.termMap[t]?.name ?? GLOBAL_TERM_MAP[t]?.name ?? t }}<span v-if="pack.termMap[t]?.zh" class="muted"> · {{ pack.termMap[t]?.zh }}</span></button></div>
       </section>
 
       <div class="pager">
@@ -83,7 +85,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 .chart { margin-top: .8rem; display: grid; gap: .6rem; justify-items: start; }
 .chart :deep(figure) { width: 100%; }
 .review { margin-top: 1.6rem; }
-/* Pager: equal buttons at both ends of the column. */
 .pager { margin-top: 1.6rem; display: grid; grid-template-columns: 9.5rem 1fr 9.5rem; align-items: center; gap: .8rem; position: sticky; bottom: calc(.5rem + env(safe-area-inset-bottom, 0px)); background: var(--ink); padding: .5rem 0; }
 .pager .btn { justify-content: center; }
 .hint { text-align: center; font-size: .85rem; }

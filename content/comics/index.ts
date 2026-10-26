@@ -1,0 +1,7 @@
+export { LEVELS } from './questions'
+export { TARGETS, buildBank } from '../../shared/generator-comics'
+export { TERMS, TERM_MAP, CATS, CAT_MAP } from './terms'
+export { SCENES } from './scenes'
+export { SOURCES, EXPLORE } from './sources'
+export { CHARACTER } from './character'
+export type { Question, Step, Choice, Term, Category, Scene, Level, SourceGroup, SourceLink } from '../../shared/types'

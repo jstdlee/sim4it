@@ -5,8 +5,10 @@ import { AgentClient } from 'agents/client'
 import MdText from './MdText.vue'
 import FoxSticker from './FoxSticker.vue'
 import { useApp } from '../stores/app'
+import { useDomainPack } from '../lib/content'
 
 const app = useApp()
+const pack = useDomainPack()
 const route = useRoute()
 type Msg = {
   role: 'user' | 'assistant' | 'error'; text: string; ctx?: string
@@ -20,22 +22,30 @@ let lastAsk: { q: string; ctx: string } | null = null
 const log = ref<HTMLElement>()
 let client: AgentClient | null = null
 
-// What is on screen right now. A term card (or a question asked from one) wins over the page.
 const ctx = computed(() => app.pinnedContext ?? app.pageContext)
 const share = ref(true)
 watch(() => ctx.value?.label, () => (share.value = true))
-// Leaving the page drops a term that was pinned from a card.
 watch(() => route.fullPath, () => { if (!app.openTerm) app.pinnedContext = null })
 
-// One-tap questions for what is on screen, so nothing needs typing.
+watch(() => app.chatDraft, (d) => {
+  if (d) {
+    input.value = d
+    app.chatDraft = ''
+  }
+})
+
 const quick = computed<string[]>(() => {
   const c = share.value ? ctx.value : null
-  if (!c) return ['What should I learn next?', 'Explain calls and puts simply', 'What is implied volatility?']
-  if (c.kind === 'question') return c.answered
-    ? ['Why is this the right answer?', 'Why is my pick weaker?', 'What if one number changed?']
+  if (!c) {
+    if (app.domain === 'director') return ['Explain the 180-degree line', 'When should I use a 24mm vs 85mm lens?', 'Explain anime on twos vs ones']
+    if (app.domain === 'comics') return ['Explain Scott McCloud’s 6 transitions', 'How does the JEV 5-Pass funnel work?', 'How do I design a bottom-left Hiki?']
+    return ['What should I learn next?', 'Explain calls and puts simply', 'What is implied volatility?']
+  }
+  if (c.kind === 'question' || c.kind === 'quest') return c.answered
+    ? ['Why is this the right answer?', 'Why is my pick weaker?', 'Give me a real-world example']
     : ['Give me a hint', 'Explain the terms here', 'What should I look at first?']
-  if (c.kind === 'term') return ['Explain it simply', 'Give me a worked example', 'How do traders use it?']
-  if (c.kind === 'simulator') return ['What are my main risks now?', 'Which Greek matters most here?', 'How would you manage this?']
+  if (c.kind === 'term') return ['Explain it simply', 'Give me a worked example', 'How do masters apply this?']
+  if (c.kind === 'simulator' || c.kind === 'lab') return ['Analyze my current setup', 'What is the biggest trade-off here?', 'How would a master adjust this?']
   return ['What should I do next here?', 'Summarize where I am', 'Quiz me on this']
 })
 
@@ -59,44 +69,55 @@ function send(q?: string, fresh = false, ctxText?: string) {
   if (!text || pending.value) return
   connect()
   const c = share.value ? ctx.value : null
-  const context = ctxText ?? c?.text ?? ''
+  const context = `[Domain: ${pack.value.brand} (${pack.value.zhTitle})]\n` + (ctxText ?? c?.text ?? '')
   if (!fresh) msgs.value.push({ role: 'user', text, ctx: c?.label })
   pending.value = true
-  statusText.value = fresh ? 'Asking again…' : 'Checking Kon’s notes…'
+  statusText.value = fresh ? 'Asking again…' : `Checking ${pack.value.mascot.name}’s notes…`
   lastAsk = { q: text, ctx: context }
   client!.send(JSON.stringify({ type: 'ask', id: crypto.randomUUID(), text, context, byok: app.byokPayload, search: app.searchPayload, fresh }))
   if (!q) input.value = ''
   scroll()
 }
-/** The answer came from the cache; ask the model again on the same screen. */
 function again(m: Msg) { if (m.ask) send(m.ask.q, true, m.ask.ctx) }
 function clear() { msgs.value = []; client?.send(JSON.stringify({ type: 'reset' })) }
 onBeforeUnmount(() => client?.close())
 </script>
 
 <template>
-  <button v-if="!app.chatOpen" class="kon-fab" aria-label="Ask Kon, the tutor" @click="app.chatOpen = true"><img src="/fox/head.webp" alt="" /><span>Ask Kon</span></button>
+  <button v-if="!app.chatOpen" class="kon-fab" :aria-label="`Ask ${pack.mascot.name}, the tutor`" @click="app.chatOpen = true">
+    <img :src="`/${pack.mascot.dir}/head.webp`" alt="" />
+    <span>Ask {{ pack.mascot.name }}</span>
+  </button>
   <aside v-else class="chat" aria-label="Tutor chat">
-    <header class="row"><img class="av" src="/fox/head.webp" alt="" /><strong class="grow">Kon · tutor</strong>
+    <header class="row">
+      <img class="av" :src="`/${pack.mascot.dir}/head.webp`" alt="" />
+      <strong class="grow">{{ pack.mascot.name }} ({{ pack.mascot.zh }}) · {{ pack.brand }}</strong>
       <button class="icon-btn" aria-label="New chat" title="New chat" @click="clear"><i class="fa-solid fa-rotate-left" /></button>
-      <button class="icon-btn" aria-label="Close the chat" title="Close" @click="app.chatOpen = false"><i class="fa-solid fa-xmark" /></button></header>
+      <button class="icon-btn" aria-label="Close the chat" title="Close" @click="app.chatOpen = false"><i class="fa-solid fa-xmark" /></button>
+    </header>
     <div v-if="ctx" class="ctx" :class="{ off: !share }">
       <i :class="['fa-solid', share ? 'fa-eye' : 'fa-eye-slash']" aria-hidden="true" />
-      <span class="grow"><b>{{ share ? 'Kon sees' : 'Not shared' }}:</b> {{ ctx.label }}</span>
+      <span class="grow"><b>{{ share ? `${pack.mascot.name} sees` : 'Not shared' }}:</b> {{ ctx.label }}</span>
       <button class="icon-btn sm" :aria-label="share ? 'Stop sharing this screen' : 'Share this screen'" :title="share ? 'Stop sharing this screen' : 'Share this screen'" @click="share = !share">
-        <i :class="['fa-solid', share ? 'fa-xmark' : 'fa-plus']" /></button>
+        <i :class="['fa-solid', share ? 'fa-xmark' : 'fa-plus']" />
+      </button>
     </div>
     <div ref="log" class="log">
-      <FoxSticker v-if="!msgs.length" class="empty" pose="point" :size="110" :say="share && ctx ? 'I can see what you are looking at. Tap a question below or type your own.' : 'Ask me anything about options.'" />
+      <FoxSticker v-if="!msgs.length" class="empty" pose="point" :size="110" :say="share && ctx ? 'I can see what you are looking at. Tap a question below or type your own.' : `Ask me anything about ${pack.brand}!`" />
       <div v-for="(m, i) in msgs" :key="i" :class="['line', m.role]">
-        <img v-if="m.role === 'assistant'" class="av" src="/fox/head.webp" alt="" />
-        <div :class="['msg', m.role]"><MdText v-if="m.role === 'assistant'" :text="m.text" />
+        <img v-if="m.role === 'assistant'" class="av" :src="`/${pack.mascot.dir}/head.webp`" alt="" />
+        <div :class="['msg', m.role]">
+          <MdText v-if="m.role === 'assistant'" :text="m.text" />
           <ol v-if="m.sources?.length" class="sources" aria-label="Sources">
             <li v-for="(src, k) in m.sources" :key="k"><a :href="src.url" target="_blank" rel="noopener noreferrer">{{ src.title }}</a></li>
           </ol>
-          <p v-if="m.cached" class="memo"><i class="fa-solid fa-bookmark" aria-hidden="true" />
-            From Kon’s notes{{ m.cached.exact ? '' : ` · ${Math.round(m.cached.similarity * 100)}% match` }}
-            <button v-if="m.ask" class="linkish" :disabled="pending" @click="again(m)">Ask again fresh</button></p><template v-else>{{ m.text }}<small v-if="m.ctx" class="about"><i class="fa-solid fa-eye" aria-hidden="true" /> {{ m.ctx }}</small></template></div>
+          <p v-if="m.cached" class="memo">
+            <i class="fa-solid fa-bookmark" aria-hidden="true" />
+            From {{ pack.mascot.name }}’s notes{{ m.cached.exact ? '' : ` · ${Math.round(m.cached.similarity * 100)}% match` }}
+            <button v-if="m.ask" class="linkish" :disabled="pending" @click="again(m)">Ask again fresh</button>
+          </p>
+          <template v-else>{{ m.text }}<small v-if="m.ctx" class="about"><i class="fa-solid fa-eye" aria-hidden="true" /> {{ m.ctx }}</small></template>
+        </div>
       </div>
       <FoxSticker v-if="pending" class="pending" :pose="statusText.startsWith('Searching') ? 'study' : 'think'" :size="56" :say="statusText" />
     </div>
@@ -104,7 +125,7 @@ onBeforeUnmount(() => client?.close())
       <button v-for="qq in quick" :key="qq" class="chip" @click="send(qq)">{{ qq }}</button>
     </div>
     <form class="row" @submit.prevent="send()">
-      <input id="kon-input" v-model="input" class="grow" placeholder="Ask Kon…" aria-label="Message" autocomplete="off" />
+      <input id="kon-input" v-model="input" class="grow" :placeholder="`Ask ${pack.mascot.name}…`" aria-label="Message" autocomplete="off" />
       <button class="btn primary" :disabled="pending || !input.trim()" aria-label="Send"><i class="fa-solid fa-paper-plane" /></button>
     </form>
   </aside>

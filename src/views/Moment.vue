@@ -15,7 +15,7 @@ const finished = ref<null | { c: number; t: number }>(null)
 const NOTE = /^prices (are )?as traded\b/i
 function brief(cp: Checkpoint) {
   const parts = cp.context.split(/(?<=[.!?])\s+(?=[A-Z0-9≈$€£(+−-])/).map((x) => x.trim().replace(/\.$/, '')).filter(Boolean)
-  return { label: cp.label, date: cp.date, facts: parts.filter((x) => !NOTE.test(x)), note: parts.filter((x) => NOTE.test(x)).join('. ') || undefined }
+  return { label: cp.label, date: cp.date ?? "", facts: parts.filter((x) => !NOTE.test(x)), note: parts.filter((x) => NOTE.test(x)).join('. ') || undefined }
 }
 const steps = computed<Step[]>(() => m.value?.checkpoints.map((cp) => ({ ...cp.step, brief: brief(cp) })) ?? [])
 // The title and summary often give the outcome away: show them only after the last decision.

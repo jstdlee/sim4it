@@ -1,13 +1,14 @@
 {
-  "name": "sim4options",
+  "name": "sim4it",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "vue-tsc --noEmit",
+    "check:content": "npx tsx scripts/check-content.ts",
     "db:migrate:local": "wrangler d1 migrations apply sim4options --local",
     "db:migrate": "wrangler d1 migrations apply sim4options --remote",
     "deploy": "vite build && wrangler deploy",

@@ -1,13 +1,12 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { BANK, LEVELS, MOMENTS, TERMS } from '../lib/content'
+import { DOMAIN_LIST } from '../lib/content'
 import { presets } from '../lib/presets'
 import { plain } from '../lib/api'
 import { useApp } from '../stores/app'
+import type { DomainId } from '../../shared/types'
 
-// One search for everything: pages, terms, questions, market moments, simulator structures.
-// Opens with the search icon, Ctrl+K or Ctrl+P. No open/close animation (keyboard, many times a day).
 type Item = { group: string; icon: string; title: string; sub: string; hay: string; go: () => void }
 
 const app = useApp()
@@ -20,26 +19,121 @@ const list = ref<HTMLElement>()
 let returnTo: HTMLElement | null = null
 
 const low = (s: string) => s.toLowerCase()
-const PAGES: [string, string, string][] = [['/', 'Journey', 'fa-route'], ['/cards', 'Skill cards', 'fa-layer-group'], ['/map', 'Term map', 'fa-diagram-project'], ['/moments', 'Market moments', 'fa-bolt'], ['/sim', 'Simulator', 'fa-sliders'], ['/settings', 'Settings', 'fa-gear']]
 
-const index: Item[] = [
-  ...PAGES.map(([to, title, icon]) => ({ group: 'Pages', icon, title, sub: '', hay: low(title), go: () => router.push(to) })),
-  ...TERMS.map((t) => ({ group: 'Terms', icon: 'fa-book', title: t.name, sub: t.short, hay: low(`${t.name} ${t.id} ${t.tags.join(' ')} ${t.short}`), go: () => { app.openTerm = t.id } })),
-  ...MOMENTS.map((m) => ({ group: 'Market moments', icon: 'fa-bolt', title: `${m.ticker} · ${m.date}`, sub: m.tags.join(' · '), hay: low(`${m.ticker} ${m.title} ${m.date} ${m.summary} ${m.tags.join(' ')} ${m.terms.join(' ')}`), go: () => router.push(`/moments/${m.id}/0`) })),
-  ...Object.entries(presets).map(([k, [name]]) => ({ group: 'Simulator', icon: 'fa-sliders', title: name, sub: 'Open in the simulator', hay: low(`${name} ${k} simulator`), go: () => router.push(`/sim?preset=${k}`) })),
-  ...LEVELS.flatMap((l) => BANK[l.n].map((qq, i) => ({
-    group: 'Questions', icon: 'fa-circle-question', title: qq.title, sub: `Level ${l.n} · ${plain(qq.scenario)}`,
-    hay: low(`${qq.title} ${plain(qq.scenario)} ${qq.steps.map((st) => plain(st.prompt)).join(' ')} ${qq.terms.join(' ')} ${qq.tags.join(' ')} level ${l.n} ${l.name}`),
-    go: () => router.push(`/quest/${l.n}/${i}`),
-  }))),
+const PAGES: [string, string, string, DomainId?][] = [
+  ['/', 'Sim4It Portal (Landing)', 'fa-compass'],
+  ['/journey', 'Domain Journey', 'fa-route'],
+  ['/cards', 'Skill Cards', 'fa-layer-group'],
+  ['/map', 'Term Map', 'fa-diagram-project'],
+  ['/moments', 'Market Moments (Options)', 'fa-bolt', 'options'],
+  ['/scenes', 'Scenes & Studio Cases', 'fa-clapperboard'],
+  ['/sim', 'Interactive Lab / Simulator', 'fa-sliders'],
+  ['/settings', 'Settings & AI Models', 'fa-gear'],
 ]
-const LIMIT: Record<string, number> = { Pages: 4, Terms: 6, 'Market moments': 6, Simulator: 4, Questions: 8 }
 
-// Every word must match; titles that start with the query rank first.
+const index = computed<Item[]>(() => {
+  const items: Item[] = [
+    ...PAGES.map(([to, title, icon, dom]) => ({
+      group: 'Pages',
+      icon,
+      title,
+      sub: dom ? `Switch to ${dom}` : '',
+      hay: low(title),
+      go: () => {
+        if (dom) app.setDomain(dom)
+        router.push(to)
+      },
+    })),
+  ]
+
+  for (const pack of DOMAIN_LIST) {
+    for (const t of pack.terms) {
+      items.push({
+        group: 'Terms',
+        icon: 'fa-book',
+        title: `${t.name}${t.zh ? ' · ' + t.zh : ''}`,
+        sub: `[${pack.brand}] ${t.short}`,
+        hay: low(`${pack.brand} ${t.name} ${t.zh || ''} ${t.ja || ''} ${t.id} ${t.tags.join(' ')} ${t.short}`),
+        go: () => {
+          app.setDomain(pack.id)
+          app.openTerm = t.id
+        },
+      })
+    }
+
+    if (pack.moments) {
+      for (const m of pack.moments) {
+        items.push({
+          group: 'Cases & Moments',
+          icon: 'fa-bolt',
+          title: `[${pack.brand}] ${m.ticker} · ${m.date}`,
+          sub: m.tags.join(' · '),
+          hay: low(`${pack.brand} ${m.ticker} ${m.title} ${m.date} ${m.summary} ${m.tags.join(' ')}`),
+          go: () => {
+            app.setDomain(pack.id)
+            router.push(`/moments/${m.id}/0`)
+          },
+        })
+      }
+    }
+
+    if (pack.scenes) {
+      for (const sc of pack.scenes) {
+        items.push({
+          group: 'Cases & Moments',
+          icon: 'fa-clapperboard',
+          title: `[${pack.brand}] ${sc.title}${sc.zh ? ' · ' + sc.zh : ''}`,
+          sub: `${sc.genre} · ${sc.setup}`,
+          hay: low(`${pack.brand} ${sc.title} ${sc.zh || ''} ${sc.genre} ${sc.setup} ${sc.tags.join(' ')}`),
+          go: () => {
+            app.setDomain(pack.id)
+            router.push(`/scenes/${sc.id}`)
+          },
+        })
+      }
+    }
+
+    for (const l of pack.levels) {
+      const qs = pack.bank[l.n] || []
+      qs.forEach((qq, i) => {
+        items.push({
+          group: 'Questions',
+          icon: 'fa-circle-question',
+          title: `[${pack.brand}] ${qq.title}`,
+          sub: `L${l.n} ${l.name} · ${plain(qq.scenario)}`,
+          hay: low(`${pack.brand} ${qq.title} ${plain(qq.scenario)} ${qq.terms.join(' ')} ${qq.tags.join(' ')} level ${l.n} ${l.name}`),
+          go: () => {
+            app.setDomain(pack.id)
+            router.push(`/quest/${l.n}/${i}`)
+          },
+        })
+      })
+    }
+  }
+
+  for (const [k, [name]] of Object.entries(presets)) {
+    items.push({
+      group: 'Labs',
+      icon: 'fa-sliders',
+      title: `[Sim4Options] ${name}`,
+      sub: 'Open in BS Payoff Simulator',
+      hay: low(`options ${name} ${k} simulator`),
+      go: () => {
+        app.setDomain('options')
+        router.push(`/sim?preset=${k}`)
+      },
+    })
+  }
+
+  return items
+})
+
+const LIMIT: Record<string, number> = { Pages: 4, Terms: 7, 'Cases & Moments': 6, Labs: 4, Questions: 8 }
+
 const results = computed(() => {
   const words = low(q.value).split(/\s+/).filter(Boolean)
   if (!words.length) return [] as Item[]
-  const scored = index
+  const scored = index.value
     .filter((it) => words.every((w) => it.hay.includes(w)))
     .map((it) => { const t = low(it.title); return { it, score: (t.startsWith(words[0]) ? 3 : 0) + (words.every((w) => t.includes(w)) ? 2 : 0) - t.length / 200 } })
     .sort((a, b) => b.score - a.score)
@@ -47,10 +141,11 @@ const results = computed(() => {
   for (const g of Object.keys(LIMIT)) out.push(...scored.filter((x) => x.it.group === g).slice(0, LIMIT[g]).map((x) => x.it))
   return out
 })
+
 const counts = computed(() => {
   const words = low(q.value).split(/\s+/).filter(Boolean)
   const c: Record<string, number> = {}
-  if (words.length) for (const it of index) if (words.every((w) => it.hay.includes(w))) c[it.group] = (c[it.group] ?? 0) + 1
+  if (words.length) for (const it of index.value) if (words.every((w) => it.hay.includes(w))) c[it.group] = (c[it.group] ?? 0) + 1
   return c
 })
 watch(q, () => (sel.value = 0))
@@ -86,7 +181,7 @@ defineExpose({ show })
       <div class="palette" role="dialog" aria-modal="true" aria-label="Search" @keydown="onKey">
         <div class="field">
           <i class="fa-solid fa-magnifying-glass" aria-hidden="true" />
-          <input id="site-search" ref="input" v-model="q" type="search" placeholder="Search terms, questions, moments, structures…" autocomplete="off" spellcheck="false"
+          <input id="site-search" ref="input" v-model="q" type="search" placeholder="Search Options, Director, Comics terms, quests, cases…" autocomplete="off" spellcheck="false"
             role="combobox" aria-expanded="true" aria-controls="search-results" :aria-activedescendant="results.length ? `sr-${sel}` : undefined" />
           <kbd>Esc</kbd>
         </div>
@@ -99,8 +194,8 @@ defineExpose({ show })
               <div class="txt"><b>{{ it.title }}</b><small v-if="it.sub">{{ it.sub }}</small></div>
             </div>
           </template>
-          <p v-if="q && !results.length" class="empty">No results for “{{ q }}”. Try a ticker (NVDA), a term (theta) or a strategy (iron condor).</p>
-          <p v-if="!q" class="empty">Search {{ index.length }} items: pages, terms, questions, market moments and simulator structures.</p>
+          <p v-if="q && !results.length" class="empty">No results for “{{ q }}”. Try "theta", "Kuleshov", "McCloud", "JEV", or "Misegoma".</p>
+          <p v-if="!q" class="empty">Search {{ index.length }} items across Sim4Options, Sim4Director, and Sim4Comics.</p>
         </div>
       </div>
     </div>
@@ -109,7 +204,7 @@ defineExpose({ show })
 
 <style scoped>
 .scrim { position: fixed; inset: 0; z-index: 70; background: rgb(26 23 18 / .3); display: flex; justify-content: center; align-items: flex-start; padding: calc(10vh + env(safe-area-inset-top, 0px)) 16px 16px; }
-.palette { width: min(640px, 100%); max-height: min(560px, 78vh); display: flex; flex-direction: column; background: var(--panel); border: 2px solid var(--edge); border-radius: 18px; box-shadow: 5px 5px 0 var(--edge); overflow: hidden; }
+.palette { width: min(660px, 100%); max-height: min(560px, 78vh); display: flex; flex-direction: column; background: var(--panel); border: 2px solid var(--edge); border-radius: 18px; box-shadow: 5px 5px 0 var(--edge); overflow: hidden; }
 .field { display: flex; align-items: center; gap: .6rem; padding: .7rem .9rem; border-bottom: 2px solid var(--edge); }
 .field i { color: var(--muted); }
 .field input { border: 0; padding: .2rem 0; font-size: 1.05rem; outline: none; background: transparent; }

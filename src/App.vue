@@ -1,24 +1,46 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import TermSheet from './components/TermSheet.vue'
 import ChatFloat from './components/ChatFloat.vue'
 import LangPicker from './components/LangPicker.vue'
 import SearchPalette from './components/SearchPalette.vue'
 import MapModal from './components/MapModal.vue'
 import { useApp } from './stores/app'
+import { useDomainPack, DOMAIN_LIST } from './lib/content'
+import type { DomainId } from '../shared/types'
 
 const app = useApp()
+const pack = useDomainPack()
 const route = useRoute()
-const links: [string, string, string][] = [
-  ['/', 'Journey', 'fa-route'],
-  ['/cards', 'Skill cards', 'fa-layer-group'],
-  ['/map', 'Term map', 'fa-diagram-project'],
-  ['/moments', 'Moments', 'fa-bolt'],
-  ['/sim', 'Simulator', 'fa-sliders'],
-]
+const router = useRouter()
 
-// Collapse the nav into a drawer when the links do not fit next to the brand and the icon cluster.
+const links = computed<[string, string, string][]>(() => {
+  const base: [string, string, string][] = [
+    ['/', 'Portal', 'fa-compass'],
+    ['/journey', 'Journey', 'fa-route'],
+    ['/cards', 'Cards', 'fa-layer-group'],
+    ['/map', 'Term Map', 'fa-diagram-project'],
+  ]
+  if (app.domain === 'options') {
+    base.push(['/moments', 'Moments', 'fa-bolt'])
+  } else {
+    base.push(['/scenes', pack.value.casesLabel, 'fa-clapperboard'])
+  }
+  base.push(['/sim', pack.value.labLabel, 'fa-sliders'])
+  if (app.domain !== 'options') {
+    base.push(['/sources', 'Sources', 'fa-book'])
+  }
+  return base
+})
+
+function switchDomain(id: DomainId) {
+  app.setDomain(id)
+  if (route.path.startsWith('/moments') && id !== 'options') router.push('/scenes')
+  else if (route.path.startsWith('/scenes') && id === 'options') router.push('/moments')
+  else if (route.path.startsWith('/quest')) router.push('/journey')
+}
+
 const top = ref<HTMLElement>(), brand = ref<{ $el: HTMLElement }>(), cluster = ref<HTMLElement>(), measure = ref<HTMLElement>()
 const collapsed = ref(false)
 function fit() {
@@ -30,7 +52,6 @@ function fit() {
 }
 let ro: ResizeObserver | null = null
 onMounted(() => {
-  // Measure on the next frame: changing the layout inside the observer callback would loop.
   let raf = 0
   ro = new ResizeObserver(() => { cancelAnimationFrame(raf); raf = requestAnimationFrame(fit) })
   for (const el of [top.value, measure.value, cluster.value]) if (el) ro.observe(el)
@@ -38,9 +59,8 @@ onMounted(() => {
   fit()
 })
 onBeforeUnmount(() => ro?.disconnect())
-watch(() => app.authed, () => nextTick(fit))
+watch([() => app.authed, () => app.domain], () => nextTick(fit))
 
-// Drawer
 const drawer = ref(false)
 const menuBtn = ref<HTMLElement>(), panel = ref<HTMLElement>()
 watch(drawer, async (v) => {
@@ -58,20 +78,44 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 
 <template>
   <header ref="top" class="top">
-    <RouterLink ref="brand" to="/" class="brand" translate="no"><img src="/fox/favicon.png" alt="" width="32" height="32" /><span>Options Quest</span></RouterLink>
+    <RouterLink ref="brand" to="/" class="brand" translate="no">
+      <img :src="`/${pack.mascot.dir}/favicon.png`" alt="" width="32" height="32" />
+      <span>Sim4It</span>
+    </RouterLink>
+
+    <!-- Domain Switcher Pill -->
+    <div v-if="app.authed" class="domain-switch" role="tablist" aria-label="Knowledge Track">
+      <button
+        v-for="d in DOMAIN_LIST"
+        :key="d.id"
+        role="tab"
+        :aria-selected="app.domain === d.id"
+        class="dom-btn"
+        :class="{ on: app.domain === d.id }"
+        :title="`${d.brand} · ${d.zhTitle}`"
+        @click="switchDomain(d.id)"
+      >
+        <i :class="['fa-solid', d.icon]" aria-hidden="true" />
+        <span>{{ d.brand.replace('Sim4', '') }}</span>
+      </button>
+    </div>
 
     <nav v-if="app.authed && !collapsed" class="links" aria-label="Main">
       <RouterLink v-for="[to, label] in links" :key="to" :to="to" class="nav">{{ label }}</RouterLink>
-      <a href="/rudao" class="nav">交易入道</a>
+      <a v-if="app.domain === 'options'" href="/rudao" class="nav">交易入道</a>
     </nav>
     <span v-else class="spacer" />
-    <!-- Invisible copy used only to measure the width the links need. -->
-    <div ref="measure" class="links measure" aria-hidden="true"><span v-for="[to, label] in links" :key="to" class="nav">{{ label }}</span><span class="nav">交易入道</span></div>
+
+    <div ref="measure" class="links measure" aria-hidden="true">
+      <span v-for="[to, label] in links" :key="to" class="nav">{{ label }}</span>
+      <span class="nav">交易入道</span>
+    </div>
 
     <div ref="cluster" class="cluster" role="toolbar" aria-label="App">
       <a v-if="!app.authed" href="/rudao" class="nav">交易入道</a>
       <SearchPalette v-if="app.authed" />
       <LangPicker />
+      <RouterLink v-if="app.authed" to="/gallery" class="icon-btn" aria-label="Mascot Gallery" title="Mascot Gallery"><i class="fa-solid fa-palette" /></RouterLink>
       <RouterLink v-if="app.authed" to="/settings" class="icon-btn" aria-label="Settings" title="Settings"><i class="fa-solid fa-gear" /></RouterLink>
       <button v-if="app.authed && collapsed" ref="menuBtn" class="icon-btn" aria-label="Open menu" title="Menu"
         aria-controls="nav-drawer" :aria-expanded="drawer" @click="drawer = true"><i class="fa-solid fa-bars" /></button>
@@ -82,11 +126,23 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
     <div v-if="drawer" class="scrim" @click.self="drawer = false">
       <aside id="nav-drawer" ref="panel" class="drawer" role="dialog" aria-modal="true" aria-label="Menu">
         <div class="dhead">
-          <img src="/fox/wave.webp" alt="" />
+          <img :src="`/${pack.mascot.dir}/wave.webp`" alt="" />
           <button class="icon-btn" aria-label="Close menu" title="Close (Esc)" @click="drawer = false"><i class="fa-solid fa-xmark" /></button>
+        </div>
+        <div class="drawer-domains">
+          <button
+            v-for="d in DOMAIN_LIST"
+            :key="d.id"
+            class="chip"
+            :class="{ on: app.domain === d.id }"
+            @click="switchDomain(d.id)"
+          >
+            <i :class="['fa-solid', d.icon]" aria-hidden="true" /> {{ d.brand }}
+          </button>
         </div>
         <nav aria-label="Main">
           <RouterLink v-for="[to, label, icon] in links" :key="to" :to="to" class="dlink"><i :class="['fa-solid', 'fa-fw', icon]" aria-hidden="true" />{{ label }}</RouterLink>
+          <RouterLink to="/gallery" class="dlink"><i class="fa-solid fa-fw fa-palette" aria-hidden="true" />Mascot Gallery</RouterLink>
           <a href="/rudao" class="dlink"><i class="fa-solid fa-fw fa-book-open" aria-hidden="true" />交易入道 · 手册</a>
           <RouterLink to="/settings" class="dlink"><i class="fa-solid fa-fw fa-gear" aria-hidden="true" />Settings</RouterLink>
         </nav>
@@ -94,33 +150,46 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
     </div>
   </Transition>
 
-  <!-- Each page mounts fresh (keyed by URL). Google Translate replaces text nodes, so patching old
-       nodes would leave the next question untranslated or stale. -->
-  <main><RouterView v-slot="{ Component, route: r }"><component :is="Component" :key="r.fullPath" /></RouterView></main>
+  <main><RouterView v-slot="{ Component, route: r }"><component :is="Component" :key="`${app.domain}:${r.fullPath}`" /></RouterView></main>
   <MapModal />
   <TermSheet />
   <ChatFloat v-if="app.authed" />
 </template>
 
 <style scoped>
-.top { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20; display: flex; gap: 16px; align-items: center; padding: .5rem 1.1rem; background: var(--panel); border-bottom: 2px solid var(--edge); }
-.brand { display: inline-flex; align-items: center; gap: .45rem; flex: none; font-family: var(--display); color: var(--paper); text-decoration: none; font-size: 1.05rem; white-space: nowrap; }
+.top { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20; display: flex; gap: 12px; align-items: center; padding: .5rem 1.1rem; background: var(--panel); border-bottom: 2px solid var(--edge); }
+.brand { display: inline-flex; align-items: center; gap: .45rem; flex: none; font-family: var(--display); color: var(--paper); text-decoration: none; font-size: 1.08rem; white-space: nowrap; }
 .brand img { width: 32px; height: 32px; transition: transform .2s; }
 .brand:hover img { transform: rotate(-10deg) scale(1.08); }
-.links { display: flex; gap: .3rem; flex: 1; min-width: 0; padding: 3px 3px 5px; }
+
+.domain-switch {
+  display: inline-flex; align-items: center; gap: 2px;
+  padding: 2px; border: 2px solid var(--edge); border-radius: 999px;
+  background: var(--ink); flex: none;
+}
+.dom-btn {
+  display: inline-flex; align-items: center; gap: .3rem;
+  padding: .2rem .6rem; border: 0; border-radius: 999px;
+  background: transparent; color: var(--muted); font-size: .78rem; font-weight: 800;
+}
+.dom-btn.on {
+  background: var(--pop); color: var(--paper); box-shadow: 1px 1px 0 var(--edge);
+}
+
+.links { display: flex; gap: .25rem; flex: 1; min-width: 0; padding: 3px 3px 5px; }
 .spacer { flex: 1; }
-/* Fixed + off-screen: a fixed box never widens the page, so phones get no sideways scroll. */
 .measure { position: fixed; top: 0; left: 0; transform: translateY(-200%); visibility: hidden; pointer-events: none; flex: none; white-space: nowrap; }
-.nav { text-decoration: none; padding: .25rem .75rem; border-radius: 999px; color: var(--paper); font-weight: 700; white-space: nowrap; border: 2px solid transparent; }
+.nav { text-decoration: none; padding: .24rem .68rem; border-radius: 999px; color: var(--paper); font-weight: 700; font-size: .92rem; white-space: nowrap; border: 2px solid transparent; }
 .nav:hover { border-color: var(--edge); }
 .nav.router-link-exact-active { background: var(--pop); border-color: var(--edge); box-shadow: var(--shadow-sm); }
 .cluster { display: flex; align-items: center; gap: 4px; flex: none; }
-@media (max-width: 420px) { .brand span { display: none; } }
+@media (max-width: 540px) { .brand span { display: none; } .dom-btn span { display: none; } }
 
 .scrim { position: fixed; inset: 0; z-index: 60; background: rgb(26 23 18 / .3); }
-.drawer { position: absolute; top: 0; right: 0; bottom: 0; width: min(300px, 86vw); display: flex; flex-direction: column; gap: .5rem; padding: calc(.8rem + env(safe-area-inset-top, 0px)) .9rem calc(1rem + env(safe-area-inset-bottom, 0px)); background: var(--panel); border-left: 2px solid var(--edge); box-shadow: -4px 0 0 var(--edge); overflow-y: auto; }
+.drawer { position: absolute; top: 0; right: 0; bottom: 0; width: min(310px, 86vw); display: flex; flex-direction: column; gap: .55rem; padding: calc(.8rem + env(safe-area-inset-top, 0px)) .9rem calc(1rem + env(safe-area-inset-bottom, 0px)); background: var(--panel); border-left: 2px solid var(--edge); box-shadow: -4px 0 0 var(--edge); overflow-y: auto; }
 .dhead { display: flex; align-items: flex-end; justify-content: space-between; }
-.dhead img { height: 88px; filter: drop-shadow(2px 0 0 #fff) drop-shadow(-2px 0 0 #fff) drop-shadow(0 2px 0 #fff) drop-shadow(0 -2px 0 #fff); }
+.dhead img { height: 84px; filter: drop-shadow(2px 0 0 #fff) drop-shadow(-2px 0 0 #fff) drop-shadow(0 2px 0 #fff) drop-shadow(0 -2px 0 #fff); }
+.drawer-domains { display: flex; flex-wrap: wrap; gap: .35rem; padding-bottom: .35rem; border-bottom: 1.5px dashed var(--edge); }
 .drawer nav { display: grid; gap: .45rem; }
 .dlink { display: flex; align-items: center; gap: .75rem; min-height: 48px; padding: .55rem .9rem; border: 2px solid var(--edge); border-radius: 14px; background: var(--panel); color: var(--paper); font-weight: 800; text-decoration: none; box-shadow: var(--shadow-sm); }
 .dlink i { color: var(--fox); }
