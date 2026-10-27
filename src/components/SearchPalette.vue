@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { DOMAIN_LIST } from '../lib/content'
-import { PERSONA_LIST, usePersonaNexus } from '../domains/topics'
+import { PERSONA_LIST, SUBJECT_LIST, usePersonaNexus } from '../domains/topics'
 import { presets } from '../lib/presets'
 import { plain } from '../lib/api'
 import { useApp } from '../stores/app'
@@ -23,7 +23,8 @@ let returnTo: HTMLElement | null = null
 const low = (s: string) => s.toLowerCase()
 
 const PAGES: [string, string, string, DomainId?][] = [
-  ['/', 'Sim4It Portal (Landing)', 'fa-compass'],
+  ['/', '角色主页 (Role Home)', 'fa-compass'],
+  ['/subjects', '选择课题 (Select Subjects)', 'fa-list-check'],
   ['/journey', 'Domain Journey', 'fa-route'],
   ['/cards', 'Skill Cards', 'fa-layer-group'],
   ['/map', 'Term Map', 'fa-diagram-project'],
@@ -50,9 +51,9 @@ const index = computed<Item[]>(() => {
 
   for (const p of PERSONA_LIST) {
     items.push({
-      group: 'Personas & Topics',
+      group: 'Personas & Subjects',
       icon: p.icon,
-      title: `[Persona ${p.id}] ${p.codename} · ${p.titleZh}`,
+      title: `[角色 ${p.id}] ${p.codename} · ${p.titleZh}`,
       sub: p.tagline,
       hay: low(`persona ${p.id} ${p.codename} ${p.titleZh} ${p.titleEn} ${p.tagline}`),
       go: () => {
@@ -61,20 +62,22 @@ const index = computed<Item[]>(() => {
       },
     })
   }
-  for (const mt of nexus.allTopics.value) {
-    if (mt.subject === 'trading' || mt.isCustom) {
-      items.push({
-        group: 'Personas & Topics',
-        icon: mt.subject === 'trading' ? 'fa-compass' : 'fa-thumbtack',
-        title: `[${mt.code}] ${mt.title}`,
-        sub: `${mt.titleEn} · ${mt.metrics}`,
-        hay: low(`trading rudao ${mt.code} ${mt.title} ${mt.titleEn} ${mt.summary} ${mt.tags.join(' ')}`),
-        go: () => {
-          if (mt.isExternalPath) window.location.href = mt.href
-          else router.push(mt.href)
-        },
-      })
-    }
+  for (const s of SUBJECT_LIST) {
+    items.push({
+      group: 'Personas & Subjects',
+      icon: s.icon,
+      title: `[课题 ${s.brand}] ${s.titleZh}`,
+      sub: `${s.titleEn} · ${s.stats.join(' · ')}`,
+      hay: low(`subject ${s.id} ${s.brand} ${s.titleZh} ${s.titleEn} ${s.summary}`),
+      go: () => {
+        if (s.domain) {
+          app.setDomain(s.domain)
+          router.push(s.primaryHref)
+        } else {
+          window.location.href = s.primaryHref
+        }
+      },
+    })
   }
   for (const pack of DOMAIN_LIST) {
     for (const t of pack.terms) {
@@ -158,7 +161,7 @@ const index = computed<Item[]>(() => {
   return items
 })
 
-const LIMIT: Record<string, number> = { 'Personas & Topics': 6, Pages: 4, Terms: 7, 'Cases & Moments': 6, Labs: 4, Questions: 8 }
+const LIMIT: Record<string, number> = { 'Personas & Subjects': 6, Pages: 4, Terms: 7, 'Cases & Moments': 6, Labs: 4, Questions: 8 }
 
 const results = computed(() => {
   const words = low(q.value).split(/\s+/).filter(Boolean)
@@ -211,7 +214,7 @@ defineExpose({ show })
       <div class="palette" role="dialog" aria-modal="true" aria-label="Search" @keydown="onKey">
         <div class="field">
           <i class="fa-solid fa-magnifying-glass" aria-hidden="true" />
-          <input id="site-search" ref="input" v-model="q" type="search" placeholder="Search J/S/T/D personas, Options, Director, Comics, Trading (交易入道) topics…" autocomplete="off" spellcheck="false"
+          <input id="site-search" ref="input" v-model="q" type="search" placeholder="Search J/S/T/D personas, Sim4Options, Sim4Director, Sim4Comics, 交易入道…" autocomplete="off" spellcheck="false"
             role="combobox" aria-expanded="true" aria-controls="search-results" :aria-activedescendant="results.length ? `sr-${sel}` : undefined" />
           <kbd>Esc</kbd>
         </div>
@@ -225,7 +228,7 @@ defineExpose({ show })
             </div>
           </template>
           <p v-if="q && !results.length" class="empty">No results for “{{ q }}”. Try "theta", "Kuleshov", "McCloud", "JEV", or "Misegoma".</p>
-          <p v-if="!q" class="empty">Search {{ index.length }} items across Sim4Options, Sim4Director, and Sim4Comics.</p>
+          <p v-if="!q" class="empty">Search {{ index.length }} items across Sim4Options, Sim4Director, Sim4Comics, and 交易入道.</p>
         </div>
       </div>
     </div>

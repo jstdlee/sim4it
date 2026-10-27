@@ -18,7 +18,8 @@ const router = useRouter()
 
 const links = computed<[string, string, string][]>(() => {
   const base: [string, string, string][] = [
-    ['/', 'Nexus', 'fa-compass'],
+    ['/', '角色主页', 'fa-compass'],
+    ['/subjects', '选择课题', 'fa-list-check'],
     ['/journey', 'Journey', 'fa-route'],
     ['/cards', 'Cards', 'fa-layer-group'],
     ['/map', 'Term Map', 'fa-diagram-project'],
@@ -39,10 +40,10 @@ function selectPersonaTop(id: PersonaId) {
   nexus.setPersona(id)
   const p = nexus.getPersonaProfile(id)
   app.setDomain(p.defaultDomain)
-  if (route.path !== '/') {
-    router.push({ path: '/', query: { step: 'landing' } })
-  } else if (!route.query.step || route.query.step === 'role') {
-    router.replace({ path: '/', query: { step: 'topics' } })
+  if (route.path !== '/' && route.path !== '/subjects') {
+    router.push('/')
+  } else if (route.path === '/' && route.query.selectRole) {
+    router.replace({ path: '/' })
   }
 }
 
@@ -64,7 +65,7 @@ onMounted(() => {
   fit()
 })
 onBeforeUnmount(() => ro?.disconnect())
-watch([() => app.domain, () => nexus.state.activePersona], () => nextTick(fit))
+watch([() => app.domain, () => nexus.state.activePersona, () => app.authed], () => nextTick(fit))
 
 const drawer = ref(false)
 const menuBtn = ref<HTMLElement>(), panel = ref<HTMLElement>()
@@ -88,8 +89,8 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
       <span>Sim4It</span>
     </RouterLink>
 
-    <!-- J · S · T · D Sci-Fi Persona Switcher Pill -->
-    <div class="persona-top-switch" role="tablist" aria-label="Explorer Persona (J/S/T/D)">
+    <!-- J · S · T · D Persona Switcher Pill -->
+    <div v-if="app.authed" class="persona-top-switch" role="tablist" aria-label="Explorer Persona (J/S/T/D)">
       <button
         v-for="p in PERSONA_LIST"
         :key="p.id"
@@ -98,14 +99,14 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
         :aria-selected="nexus.state.activePersona === p.id"
         :class="['persona-top-btn', { on: nexus.state.activePersona === p.id }]"
         :style="nexus.state.activePersona === p.id ? { background: p.accent, color: '#fff', borderColor: '#1a1712' } : {}"
-        :title="`${p.id} · ${nexus.getPersonaProfile(p.id).codename} (${nexus.getPersonaProfile(p.id).titleZh})`"
+        :title="`${p.id} · ${p.codename} (${p.titleZh})`"
         @click="selectPersonaTop(p.id)"
       >
         <b>{{ p.id }}</b>
       </button>
     </div>
 
-    <nav v-if="!collapsed" class="links" aria-label="Main">
+    <nav v-if="app.authed && !collapsed" class="links" aria-label="Main">
       <RouterLink v-for="[to, label] in links" :key="to" :to="to" class="nav">{{ label }}</RouterLink>
       <a href="/rudao" class="nav">交易入道</a>
     </nav>
@@ -117,11 +118,11 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
     </div>
 
     <div ref="cluster" class="cluster" role="toolbar" aria-label="App">
-      <SearchPalette />
+      <SearchPalette v-if="app.authed" />
       <LangPicker />
-      <RouterLink to="/gallery" class="icon-btn" aria-label="Mascot Gallery" title="Mascot Gallery"><i class="fa-solid fa-palette" /></RouterLink>
-      <RouterLink to="/settings" class="icon-btn" aria-label="Settings" title="Settings"><i class="fa-solid fa-gear" /></RouterLink>
-      <button v-if="collapsed" ref="menuBtn" class="icon-btn" aria-label="Open menu" title="Menu"
+      <RouterLink v-if="app.authed" to="/gallery" class="icon-btn" aria-label="Mascot Gallery" title="Mascot Gallery"><i class="fa-solid fa-palette" /></RouterLink>
+      <RouterLink v-if="app.authed" to="/settings" class="icon-btn" aria-label="Settings" title="Settings"><i class="fa-solid fa-gear" /></RouterLink>
+      <button v-if="app.authed && collapsed" ref="menuBtn" class="icon-btn" aria-label="Open menu" title="Menu"
         aria-controls="nav-drawer" :aria-expanded="drawer" @click="drawer = true"><i class="fa-solid fa-bars" /></button>
     </div>
   </header>
@@ -141,7 +142,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
             :class="{ on: nexus.state.activePersona === p.id }"
             @click="selectPersonaTop(p.id)"
           >
-            <b>{{ p.id }}</b> · {{ nexus.getPersonaProfile(p.id).codename }}
+            <b>{{ p.id }}</b> · {{ p.titleZh }}
           </button>
         </div>
         <nav aria-label="Main">
@@ -155,9 +156,9 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
   </Transition>
 
   <main><RouterView v-slot="{ Component, route: r }"><component :is="Component" :key="`${app.domain}:${r.path}`" /></RouterView></main>
-  <MapModal />
-  <TermSheet />
-  <ChatFloat />
+  <MapModal v-if="app.authed" />
+  <TermSheet v-if="app.authed" />
+  <ChatFloat v-if="app.authed" />
 </template>
 
 <style scoped>

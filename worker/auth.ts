@@ -6,7 +6,7 @@ const COOKIE = 'oq_session'
 const MAX_AGE = 60 * 60 * 24 * 30
 const enc = new TextEncoder()
 
-const tokens = (env: Env) => (env.ACCESS_TOKEN ?? '').split(',').map((t) => t.trim()).filter(Boolean)
+const tokens = (env: Env) => [...(env.ACCESS_TOKEN ?? '').split(','), env.RUDAO_PASSWORD ?? 'rudao2026'].map((t) => t.trim()).filter(Boolean)
 
 async function hmacHex(key: string, msg: string) {
   const k = await crypto.subtle.importKey('raw', enc.encode(key), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])

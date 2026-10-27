@@ -23,7 +23,7 @@ app.post('/api/login', async (c) => {
   return c.json({ ok: true })
 })
 app.post('/api/logout', (c) => { c.header('set-cookie', logoutCookie); return c.json({ ok: true }) })
-app.get('/api/session', async (c) => c.json({ ok: true, tokenAuthed: await isAuthed(c.req.raw, c.env) }))
+app.get('/api/session', async (c) => { const authed = await isAuthed(c.req.raw, c.env); return c.json({ ok: authed, tokenAuthed: authed }) })
 
 /** Clef sparring trader: picks its own answer for a decision step, with probabilities. */
 app.post('/api/clef/spar', async (c) => {
@@ -125,7 +125,10 @@ export default {
     if (url.pathname === '/rudao' || url.pathname.startsWith('/rudao/')) {
       return handleRudaoRequest(req, env)
     }
-    // Open access mode: persona gateway and resource collections require no authentication
+    const isApi = url.pathname.startsWith('/api/') || url.pathname.startsWith('/agents/')
+    if (isApi && !PUBLIC.has(url.pathname) && !(await isAuthed(req, env))) {
+      return Response.json({ ok: false, error: 'Sign in with your access token.' }, { status: 401 })
+    }
     const agentRes = await routeAgentRequest(req, env)
     if (agentRes) return agentRes
     if (url.pathname.startsWith('/api/')) return app.fetch(req, env, ctx)

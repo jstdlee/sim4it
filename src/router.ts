@@ -11,6 +11,7 @@ export const router = createRouter({
   scrollBehavior: () => ({ top: 0 }),
   routes: [
     { path: '/', component: () => import('./views/Landing.vue') },
+    { path: '/subjects', component: () => import('./views/Subjects.vue') },
     { path: '/journey', component: () => import('./views/Journey.vue') },
     { path: '/options', redirect: () => { useApp().setDomain('options'); return '/journey' } },
     { path: '/director', redirect: () => { useApp().setDomain('director'); return '/journey' } },
@@ -27,16 +28,16 @@ export const router = createRouter({
     { path: '/sources', component: () => import('./views/Sources.vue') },
     { path: '/gallery', component: () => import('./views/Gallery.vue') },
     { path: '/settings', component: () => import('./views/Settings.vue') },
-    { path: '/login', redirect: '/' },
+    { path: '/login', component: () => import('./views/Login.vue') },
     { path: '/:rest(.*)*', component: () => import('./views/NotFound.vue') },
   ],
 })
 
 router.beforeEach(async (to) => {
   const app = useApp()
-  // No login gate required: Sim4It acts as an open 4-Persona (J/S/T/D) & 4-Subject resource hub
-  app.authed = true
-
+  if (typeof to.query.domain === 'string' && VALID_DOMAINS.includes(to.query.domain as DomainId)) {
+    app.setDomain(to.query.domain as DomainId)
+  }
   const qPersona = typeof to.query.persona === 'string' ? (to.query.persona.toUpperCase() as PersonaId) : null
   if (qPersona && VALID_PERSONAS.includes(qPersona)) {
     const nexus = usePersonaNexus()
@@ -45,8 +46,13 @@ router.beforeEach(async (to) => {
       app.setDomain(PERSONAS[qPersona].defaultDomain)
     }
   }
-
-  if (typeof to.query.domain === 'string' && VALID_DOMAINS.includes(to.query.domain as DomainId)) {
-    app.setDomain(to.query.domain as DomainId)
+  if (app.authed === null) {
+    app.authed = await fetch('/api/session').then((r) => r.json()).then((j: any) => !!j.ok).catch(() => false)
+  }
+  if (!app.authed && to.path !== '/login') {
+    return { path: '/login', query: to.fullPath === '/' ? {} : { next: to.fullPath } }
+  }
+  if (app.authed && to.path === '/login') {
+    return '/'
   }
 })

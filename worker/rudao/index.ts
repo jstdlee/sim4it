@@ -67,7 +67,9 @@ export async function handleRudaoRequest(req: Request, env: Env): Promise<Respon
   const authed = await isRudaoAuthenticated(req, env);
 
   if (url.pathname.startsWith("/rudao/api/")) {
-    // Public access enabled for Rudao knowledge hub
+    if (!authed) {
+      return jsonResp({ error: "Unauthorized" }, 401);
+    }
     if (!env.DATABASE_URL) {
       return jsonResp({ error: "DATABASE_URL not configured" }, 500);
     }
@@ -138,7 +140,12 @@ export async function handleRudaoRequest(req: Request, env: Env): Promise<Respon
     return jsonResp({ error: "Not found" }, 404);
   }
 
-  // Render Rudao MdBook directly without login wall
+  if (!authed) {
+    return new Response(renderLoginHtml(), {
+      status: 200,
+      headers: { "Content-Type": "text/html; charset=utf-8" },
+    });
+  }
 
   const respHeaders: Record<string, string> = {
     "Content-Type": "text/html; charset=utf-8",
