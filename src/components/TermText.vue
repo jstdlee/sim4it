@@ -14,7 +14,7 @@ const parts = computed(() => {
   while ((m = re.exec(props.text))) {
     if (m.index > last) out.push({ t: 'txt', v: props.text.slice(last, m.index) })
     const id = m[1].trim()
-    const term = pack.value.termMap[id] ?? GLOBAL_TERM_MAP[id]?.term
+    const term = pack.value.termMap[id] ?? GLOBAL_TERM_MAP[id]
     out.push({ t: 'term', id, v: m[2] ?? term?.name ?? id })
     last = m.index + m[0].length
   }
