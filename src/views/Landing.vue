@@ -1,583 +1,923 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
-import { DOMAINS, DOMAIN_LIST, UPCOMING_DOMAINS, type DomainPack } from '../domains/registry'
+import { computed, ref } from 'vue'
+import { RouterLink, useRouter } from 'vue-router'
 import { useApp } from '../stores/app'
-import { usePageContext } from '../lib/context'
-import { GLOBAL_TERM_MAP, useDomainPack } from '../lib/content'
-import { plain } from '../lib/api'
+import { DOMAINS, DOMAIN_LIST } from '../domains/registry'
+import {
+  PERSONA_LIST,
+  SUBJECT_LIST,
+  SUBJECT_COLLECTIONS,
+  usePersonaNexus,
+  type PersonaId,
+  type SubjectId,
+  type TopicKind,
+  type MicroTopic,
+} from '../domains/topics'
+import type { DomainId, Question } from '../../shared/types'
+import FoxSticker from '../components/FoxSticker.vue'
 import TermText from '../components/TermText.vue'
-import type { DomainId, Question, Step, Term } from '../../shared/types'
 
 const app = useApp()
 const router = useRouter()
-const pack = useDomainPack()
+const nexus = usePersonaNexus()
 
-/* ---------- progress helpers (per domain, all reactive through app.results) ---------- */
-const qsOf = (p: DomainPack, n: number): Question[] => p.bank[n] ?? []
-const levelDone = (p: DomainPack, n: number) => app.levelProgress(qsOf(p, n).map((q) => q.id))
-const levelTotal = (p: DomainPack, n: number) => qsOf(p, n).length
-const levelComplete = (p: DomainPack, n: number) => levelTotal(p, n) > 0 && levelDone(p, n) >= levelTotal(p, n)
-const firstOpen = (p: DomainPack, n: number) => Math.max(0, qsOf(p, n).findIndex((q) => !app.results[q.id]))
-const domainTotal = (p: DomainPack) => p.totalQuestions
-const domainDone = (p: DomainPack) => app.levelProgress(p.allQuestions.map((q) => q.id))
-const casesCount = (p: DomainPack) => (p.moments?.length ?? 0) + (p.scenes?.length ?? 0)
-const casesPath = (p: DomainPack) => (p.id === 'options' ? '/moments' : '/scenes')
-const ratio = (done: number, total: number) => `${total > 0 ? Math.min(100, (done / total) * 100) : 0}%`
-const termName = (p: DomainPack, id: string) => p.termMap[id]?.name ?? GLOBAL_TERM_MAP[id]?.name ?? id
+// Checklist filters
+const checklistSubjectFilter = ref<'all' | SubjectId>('all')
+const checklistStatusFilter = ref<'all' | 'todo' | 'done'>('all')
 
-const totalQuestions = computed(() => DOMAIN_LIST.reduce((s, p) => s + domainTotal(p), 0))
-const totalDone = computed(() => DOMAIN_LIST.reduce((s, p) => s + domainDone(p), 0))
-const totalTerms = computed(() => DOMAIN_LIST.reduce((s, p) => s + p.terms.length, 0))
-const totalCases = computed(() => DOMAIN_LIST.reduce((s, p) => s + casesCount(p), 0))
+// Micro-topic catalog filters
+const catalogSubject = ref<'all' | SubjectId>('all')
+const catalogKind = ref<'all' | TopicKind>('all')
+const catalogQuery = ref('')
 
-/* ---------- navigation ---------- */
-/** Set the active track, then navigate. */
-function enterDomain(id: DomainId, path = '/journey') {
-  app.setDomain(id)
-  router.push(path)
-}
-/** Switch the active track in place without leaving the landing page. */
-function previewDomain(id: DomainId) {
-  app.setDomain(id)
-}
-function previewBelow(id: DomainId) {
-  app.setDomain(id)
-  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  document.getElementById('workbench')?.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' })
-}
+// Custom topic creation modal/panel state
+const showCustomForm = ref(false)
+const customForm = ref<{
+  subject: SubjectId
+  code: string
+  title: string
+  titleEn: string
+  summary: string
+  href: string
+  tagsText: string
+}>({
+  subject: 'trading',
+  code: '',
+  title: '',
+  titleEn: '',
+  summary: '',
+  href: '',
+  tagsText: '',
+})
 
-/* ---------- mentor stage ---------- */
-const MENTOR_POSE: Record<DomainId, string> = { options: 'wave', director: 'director', comics: 'study' }
-const mentorSrc = (p: DomainPack, pose?: string) => `/${p.mascot.dir}/${pose ?? MENTOR_POSE[p.id]}.webp`
+// Persona profile customization panel state
+const showPersonaEdit = ref(false)
+const personaEditForm = ref({
+  codename: '',
+  titleZh: '',
+  tagline: '',
+})
 
-/* ---------- quick resume: next incomplete level and quest in the active track ---------- */
-const resume = computed(() => {
-  const p = pack.value
-  const lvl = p.levels.find((l) => levelTotal(p, l.n) > 0 && !levelComplete(p, l.n)) ?? p.levels.find((l) => levelTotal(p, l.n) > 0)
-  if (!lvl) return null
-  const idx = firstOpen(p, lvl.n)
-  return {
-    level: lvl,
-    idx,
-    q: qsOf(p, lvl.n)[idx],
-    total: levelTotal(p, lvl.n),
-    cleared: domainDone(p) >= domainTotal(p),
+function openPersonaEditor() {
+  const cur = nexus.activePersona.value
+  personaEditForm.value = {
+    codename: cur.codename,
+    titleZh: cur.titleZh,
+    tagline: cur.tagline,
   }
-})
-
-const stageLine = computed(() => {
-  const p = pack.value
-  const r = resume.value
-  if (!r) return ''
-  if (r.cleared) return `${p.mascot.name}: Track cleared. Run the Cases and the Lab next.`
-  const done = domainDone(p)
-  if (done === 0) return `${p.mascot.name}: Start with L${r.level.n} ${r.level.name}. One quest at a time.`
-  return `${p.mascot.name}: ${done} of ${domainTotal(p)} done. Next up, L${r.level.n} ${r.level.name}.`
-})
-
-/* ---------- workbench tabs ---------- */
-type Tab = 'ladder' | 'sampler' | 'cards'
-const TABS: { id: Tab; label: string; zh: string; icon: string }[] = [
-  { id: 'ladder', label: 'Level Ladder', zh: '闯关路线图', icon: 'fa-route' },
-  { id: 'sampler', label: 'Live Decision Sampler', zh: '实战推演试炼', icon: 'fa-bolt' },
-  { id: 'cards', label: 'Featured Trilingual Cards', zh: '核心三语闪卡', icon: 'fa-layer-group' },
-]
-const tab = ref<Tab>('ladder')
-
-function startLabel(n: number) {
-  const p = pack.value
-  if (levelComplete(p, n)) return `Review L${n}`
-  return levelDone(p, n) === 0 ? `Start L${n}` : `Continue L${n}`
+  showPersonaEdit.value = !showPersonaEdit.value
 }
 
-/* ---------- live decision sampler ---------- */
-interface Sample { level: number; idx: number; q: Question }
+function savePersonaEditor() {
+  nexus.updatePersonaProfile(nexus.state.activePersona, {
+    codename: personaEditForm.value.codename,
+    titleZh: personaEditForm.value.titleZh,
+    tagline: personaEditForm.value.tagline,
+  })
+  showPersonaEdit.value = false
+}
 
-const samples = computed<Sample[]>(() => {
-  const p = pack.value
-  const withQs = p.levels.filter((l) => levelTotal(p, l.n) > 0)
-  if (withQs.length === 0) return []
-  // Early, middle and late level, so the visitor sees the track's range.
-  const picks = [withQs[0], withQs[Math.floor((withQs.length - 1) / 2)], withQs[withQs.length - 1]]
-  const levels = [...new Set(picks.map((l) => l.n))]
-  return levels.map((n) => {
-    const list = qsOf(p, n)
-    const idx = Math.floor(list.length / 2)
-    return { level: n, idx, q: list[idx] }
+function resetPersonaName() {
+  nexus.resetPersonaProfile(nexus.state.activePersona)
+  showPersonaEdit.value = false
+}
+
+function selectPersona(id: PersonaId) {
+  nexus.setPersona(id)
+  const profile = nexus.getPersonaProfile(id)
+  app.setDomain(profile.defaultDomain)
+  router.replace({ path: '/', query: { persona: id } })
+}
+
+// Compute whether a topic is completed (either manually checked or all quests in level finished)
+function isTopicCompleted(topic: MicroTopic, pid: PersonaId = nexus.state.activePersona): boolean {
+  if (nexus.isDone(topic.id, pid)) return true
+  if (topic.kind === 'level' && topic.domain && topic.levelNum) {
+    const prog = getTopicLiveProgress(topic)
+    if (prog && prog.total > 0 && prog.done >= prog.total) return true
+  }
+  return false
+}
+
+function getTopicLiveProgress(topic: MicroTopic): { done: number; total: number; pct: number } | null {
+  if (topic.kind === 'level' && topic.domain && topic.levelNum) {
+    const qs = DOMAINS[topic.domain].bank[topic.levelNum] || []
+    const total = qs.length
+    const done = app.levelProgress(qs.map((q) => q.id))
+    return { done, total, pct: total ? Math.round((done / total) * 100) : 0 }
+  }
+  return null
+}
+
+// Persona telemetry stats for the 4 gateway cards
+const personaStats = computed(() => {
+  const out: Record<PersonaId, { total: number; done: number; pct: number }> = {
+    J: { total: 0, done: 0, pct: 0 },
+    S: { total: 0, done: 0, pct: 0 },
+    T: { total: 0, done: 0, pct: 0 },
+    D: { total: 0, done: 0, pct: 0 },
+  }
+  for (const pid of ['J', 'S', 'T', 'D'] as PersonaId[]) {
+    const ids = nexus.state.pinnedByPersona[pid] || []
+    const topics = ids.map((id) => nexus.topicMap.value[id]).filter((t): t is MicroTopic => Boolean(t))
+    const total = topics.length
+    const done = topics.filter((t) => isTopicCompleted(t, pid)).length
+    out[pid] = {
+      total,
+      done,
+      pct: total ? Math.round((done / total) * 100) : 0,
+    }
+  }
+  return out
+})
+
+// Filtered active persona checklist items
+const filteredChecklist = computed(() => {
+  return nexus.activeChecklistTopics.value.filter((t) => {
+    if (checklistSubjectFilter.value !== 'all' && t.subject !== checklistSubjectFilter.value) {
+      return false
+    }
+    const done = isTopicCompleted(t)
+    if (checklistStatusFilter.value === 'todo' && done) return false
+    if (checklistStatusFilter.value === 'done' && !done) return false
+    return true
   })
 })
 
-const sampleAt = ref(0)
-const stepAt = ref<Record<string, number>>({})
-const picks = ref<Record<string, string>>({})
+const checklistCountBySubject = computed(() => {
+  const counts: Record<SubjectId, number> = { options: 0, director: 0, comics: 0, trading: 0 }
+  for (const t of nexus.activeChecklistTopics.value) {
+    counts[t.subject] = (counts[t.subject] || 0) + 1
+  }
+  return counts
+})
 
-const sample = computed(() => samples.value[sampleAt.value] ?? null)
-const qKey = computed(() => (sample.value ? `${app.domain}:${sample.value.q.id}` : ''))
-const stepIdx = computed(() => (qKey.value ? stepAt.value[qKey.value] ?? 0 : 0))
-const step = computed<Step | null>(() => sample.value?.q.steps[stepIdx.value] ?? null)
-const pickKey = computed(() => (qKey.value ? `${qKey.value}:${stepIdx.value}` : ''))
-const pickedId = computed(() => (pickKey.value ? picks.value[pickKey.value] : undefined))
-const verdictOk = computed(() => !!step.value && pickedId.value === step.value.answer)
-const answerLabel = computed(() => step.value?.choices.find((c) => c.id === step.value?.answer)?.label ?? '')
-const letter = (i: number) => String.fromCharCode(65 + i)
+const catalogCountBySubject = computed(() => {
+  const counts: Record<SubjectId, number> = { options: 0, director: 0, comics: 0, trading: 0 }
+  for (const t of nexus.allTopics.value) {
+    counts[t.subject] = (counts[t.subject] || 0) + 1
+  }
+  return counts
+})
 
-function choose(id: string) {
-  if (pickedId.value || !pickKey.value) return
-  picks.value = { ...picks.value, [pickKey.value]: id }
-}
-function choiceState(id: string) {
-  if (!pickedId.value || !step.value) return ''
-  if (id === step.value.answer) return 'right'
-  if (id === pickedId.value) return 'wrong'
-  return 'dim'
-}
-function nextStep() {
-  const s = sample.value
-  if (!s || !qKey.value) return
-  if (stepIdx.value < s.q.steps.length - 1) stepAt.value = { ...stepAt.value, [qKey.value]: stepIdx.value + 1 }
-}
-function askTutor() {
-  const s = sample.value
-  const st = step.value
-  if (!s || !st) return
-  const mine = st.choices.find((c) => c.id === pickedId.value)?.label
-  app.askTutor({
-    label: `${pack.value.brand} · ${s.q.title}`,
-    prompt: mine
-      ? `I answered "${mine}" on "${s.q.title}". Walk me through why the correct choice holds.`
-      : `Help me think through "${s.q.title}" before I choose. Give hints, not the answer.`,
-    context: `${plain(s.q.scenario)} Step ${stepIdx.value + 1} of ${s.q.steps.length}: ${plain(st.prompt)} Choices: ${st.choices.map((c) => c.label).join(' | ')}`,
+// Filtered catalog topics
+const filteredCatalogTopics = computed(() => {
+  const q = catalogQuery.value.trim().toLowerCase()
+  return nexus.allTopics.value.filter((t) => {
+    if (catalogSubject.value !== 'all' && t.subject !== catalogSubject.value) return false
+    if (catalogKind.value !== 'all' && t.kind !== catalogKind.value) return false
+    if (q) {
+      const hay = `${t.code} ${t.title} ${t.titleEn} ${t.summary} ${t.tags.join(' ')}`.toLowerCase()
+      if (!hay.includes(q)) return false
+    }
+    return true
   })
+})
+
+function openTopic(topic: MicroTopic) {
+  if (topic.domain) {
+    app.setDomain(topic.domain)
+  }
+  if (topic.isExternalPath || topic.href.startsWith('/rudao') || topic.href.startsWith('http')) {
+    window.location.href = topic.href
+  } else {
+    router.push(topic.href)
+  }
 }
-// Each domain has its own sample set, so start from the first sample when the track changes.
-watch(() => app.domain, () => { sampleAt.value = 0 })
 
-/* ---------- featured trilingual cards ---------- */
-const featured = computed<Term[]>(() => {
-  const p = pack.value
-  return [...p.terms].sort((a, b) => (p.termWeight[b.id] ?? 0) - (p.termWeight[a.id] ?? 0)).slice(0, 6)
+function openCollectionLink(href: string, domain?: DomainId, external?: boolean) {
+  if (domain) app.setDomain(domain)
+  if (external || href.startsWith('/rudao') || href.startsWith('http')) {
+    window.location.href = href
+  } else {
+    router.push(href)
+  }
+}
+
+function submitCustomTopic() {
+  if (!customForm.value.title.trim()) return
+  const tags = customForm.value.tagsText
+    .split(/[,，\s]+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+  nexus.addCustomTopic({
+    subject: customForm.value.subject,
+    code: customForm.value.code,
+    title: customForm.value.title,
+    titleEn: customForm.value.titleEn,
+    summary: customForm.value.summary,
+    href: customForm.value.href,
+    tags,
+    pinToCurrentPersona: true,
+  })
+  customForm.value = {
+    subject: customForm.value.subject,
+    code: '',
+    title: '',
+    titleEn: '',
+    summary: '',
+    href: '',
+    tagsText: '',
+  }
+  showCustomForm.value = false
+}
+
+function pinAllFiltered() {
+  nexus.pinBatch(filteredCatalogTopics.value.map((t) => t.id))
+}
+
+function unpinAllFiltered() {
+  nexus.unpinBatch(filteredCatalogTopics.value.map((t) => t.id))
+}
+
+function filterCatalogBySubject(subj: SubjectId) {
+  catalogSubject.value = subj
+  const el = document.getElementById('topic-library-section')
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+function scrollToLibrary() {
+  const el = document.getElementById('topic-library-section')
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+const KIND_LABELS: Record<TopicKind, string> = {
+  level: '阶梯闯关 Level',
+  cards: '概念卡组 Cards',
+  case: '实战推演 Case',
+  lab: '交互实验室 Lab',
+  'trading-chapter': '交易入道课题 Chapter',
+  'trading-tool': '交易实战工具 Tool',
+  custom: '自定义课题 Custom',
+}
+
+// Interactive sampler state for quick practice at the bottom of the portal
+const samplerDomain = computed<DomainId>(() => app.domain)
+const samplerPack = computed(() => DOMAINS[samplerDomain.value])
+const sampleQuests = computed<{ level: number; idx: number; q: Question }[]>(() => {
+  const pack = samplerPack.value
+  const picks: { level: number; idx: number; q: Question }[] = []
+  const lvs = [1, Math.ceil(pack.levels.length / 2), pack.levels.length]
+  for (const lv of lvs) {
+    const q = pack.bank[lv]?.[0]
+    if (q) picks.push({ level: lv, idx: 0, q })
+  }
+  return picks
 })
-
-/* ---------- Sim4Comics deep-dive matrix ---------- */
-const COMICS = DOMAINS.comics
-const COMICS_PILLARS = [
-  {
-    no: '01',
-    icon: 'fa-book-open',
-    accent: 'var(--fox)',
-    title: 'Scott McCloud & 5 Manga Masters',
-    blurb: 'Closure in the gutter, six panel transitions, the Big Triangle and seven word-picture modes, read with Tezuka montage, Toriyama impact flow, Inoue silent Ma, Otomo deep focus and Urasawa Hiki hooks.',
-    terms: ['closure', 'big_triangle', 'tezuka_montage', 'inoue_ma', 'urasawa_cliffhanger'],
-    levels: [1, 3],
-  },
-  {
-    no: '02',
-    icon: 'fa-microchip',
-    accent: 'var(--teal)',
-    title: 'JEV System 2/1 · 14-Factor & 52-Micro-Factor Engine',
-    blurb: 'A System 2 compiler defines five operators (Decompose, Horizon, Weight, Joint, Degrade). System 1 (/v1/systemone) runs them in milliseconds. A 5-pass polling funnel scores 14 orthogonal factors (F01–F14) and 52 micro-factors across nine domains.',
-    terms: ['jev_two_tier', 'jev_five_operators', 'jev_five_pass_funnel', 'shannon_entropy_gate'],
-    levels: [5, 6],
-  },
-  {
-    no: '03',
-    icon: 'fa-table-columns',
-    accent: 'var(--call)',
-    title: 'tldraw-manga 3-Tier Polygon & 6-Axis layoutScore',
-    blurb: 'Page → Strip → Polygon Panel topology, a five-stage workbench, five geometry sliders, and 36 seeded layouts graded on six editor axes (layoutScore) with one-click prescriptions. Exports to a five-layer .ora and HTML.',
-    terms: ['tldraw_3tier', 'tldraw_5stage', 'tldraw_5d_geometry', 'tldraw_layout_score'],
-    levels: [7],
-  },
-]
-
-/* ---------- masthead decoration (static) ---------- */
-const RAYS = Array.from({ length: 36 }, (_, i) => {
-  const a = (i / 36) * Math.PI * 2
-  const r0 = 130 + ((i * 37) % 5) * 14
-  const r1 = 580
-  return { x1: 780 + Math.cos(a) * r0, y1: 210 + Math.sin(a) * r0, x2: 780 + Math.cos(a) * r1, y2: 210 + Math.sin(a) * r1, w: 1 + ((i * 13) % 3) }
-})
-
-usePageContext(() => ({
-  kind: 'page',
-  label: 'Sim4It Unified Knowledge Portal',
-  text: `Sim4It landing page. ${DOMAIN_LIST.map((p) => `${p.brand}: ${domainDone(p)}/${domainTotal(p)} quests done, ${p.terms.length} terms, ${casesCount(p)} cases`).join('; ')}. Previewing ${pack.value.brand}.`,
-}))
+const activeSampleIdx = ref(0)
+const samplePick = ref<string | null>(null)
+const currentSample = computed(() => sampleQuests.value[activeSampleIdx.value] ?? sampleQuests.value[0])
 </script>
 
 <template>
-  <div class="wrap landing">
-    <!-- 1. Masthead: live totals, global mastery, mentor stage -->
-    <section class="card hero" aria-labelledby="hero-title">
-      <svg class="rays" viewBox="0 0 1000 420" preserveAspectRatio="xMaxYMid slice" aria-hidden="true">
-        <line v-for="(r, k) in RAYS" :key="k" :x1="r.x1" :y1="r.y1" :x2="r.x2" :y2="r.y2" :stroke-width="r.w" />
-      </svg>
-      <div class="dots" aria-hidden="true" />
-
-      <div class="copy">
-        <span class="chip on">Sim4It · Interactive Decision &amp; Mastery Portal</span>
-        <h1 id="hero-title">Simulate the Craft. <span class="mark">实战推演知识库</span></h1>
-        <p class="read">
-          One interactive engine for three high-stakes decision tracks:
-          <strong>Options Trading (Sim4Options)</strong>, <strong>Film &amp; Animation Directing (Sim4Director)</strong>, and
-          <strong>Manga Storyboarding &amp; JEV Decision Architecture (Sim4Comics)</strong>.
-          Each track shares one trilingual concept graph, multi-step decision quests, and a live lab.
-        </p>
-
-        <dl class="totals">
-          <div><dt>Decision quests</dt><dd>{{ totalQuestions }}</dd></div>
-          <div><dt>Trilingual cards</dt><dd>{{ totalTerms }}</dd></div>
-          <div><dt>Cases</dt><dd>{{ totalCases }}</dd></div>
-          <div><dt>Interactive labs</dt><dd>{{ DOMAIN_LIST.length }}</dd></div>
-        </dl>
-
-        <div class="global-meter">
-          <div class="spread small-meta">
-            <span>Global mastery across all tracks</span>
-            <strong>{{ totalDone }} / {{ totalQuestions }} quests</strong>
-          </div>
-          <div class="meter"><span :style="{ width: ratio(totalDone, totalQuestions) }" /></div>
-        </div>
-
-        <ul class="dpills" aria-label="Progress by track">
-          <li v-for="p in DOMAIN_LIST" :key="p.id" class="dpill">
-            <i :class="['fa-solid', p.icon]" aria-hidden="true" />
-            <span>{{ p.brand }}</span>
-            <b>{{ domainDone(p) }}/{{ domainTotal(p) }}</b>
-            <span class="meter mini"><span :style="{ width: ratio(domainDone(p), domainTotal(p)), background: p.accent }" /></span>
-          </li>
-        </ul>
-      </div>
-
-      <aside class="stage" aria-label="Active mentor">
-        <div class="bubble stage-bubble" aria-live="polite">{{ stageLine }}</div>
-        <img :src="mentorSrc(pack, resume?.cleared ? 'cheer' : undefined)" :alt="pack.mascot.name" class="stage-img" />
-        <p class="stage-name"><b>{{ pack.mascot.name }}</b> <span class="muted">· {{ pack.mascot.role }}</span></p>
-        <div class="switcher" role="group" aria-label="Switch track">
-          <button
-            v-for="p in DOMAIN_LIST"
-            :key="p.id"
-            class="switch"
-            :class="{ on: app.domain === p.id }"
-            :aria-pressed="app.domain === p.id"
-            @click="previewDomain(p.id)"
-          >
-            <i :class="['fa-solid', p.icon]" aria-hidden="true" />
-            <span class="grow">{{ p.brand }}</span>
-            <small>{{ p.mascot.name }}</small>
-          </button>
-        </div>
-      </aside>
-    </section>
-
-    <!-- 2. Quick resume bar for the active track -->
-    <section v-if="resume" class="card resume" aria-label="Quick resume">
-      <div class="resume-main">
-        <span class="eyebrow"><i class="fa-solid fa-forward-step" aria-hidden="true" /> {{ resume.cleared ? 'Track cleared' : 'Next up' }} · {{ pack.brand }}</span>
-        <strong class="resume-title">
-          L{{ resume.level.n }} · {{ resume.level.name }}
-          <span class="muted">Q{{ resume.idx + 1 }} of {{ resume.total }}</span>
-        </strong>
-        <span class="muted small">{{ resume.q?.title }}</span>
-      </div>
-      <button class="btn primary" @click="enterDomain(pack.id, `/quest/${resume.level.n}/${resume.idx}`)">
-        Resume quest <i class="fa-solid fa-arrow-right" aria-hidden="true" />
-      </button>
-      <div class="quick" aria-label="Quick links">
-        <button class="btn" @click="enterDomain(pack.id, '/cards')"><i class="fa-solid fa-layer-group" aria-hidden="true" />Cards</button>
-        <button class="btn" @click="enterDomain(pack.id, '/map')"><i class="fa-solid fa-diagram-project" aria-hidden="true" />Term Map</button>
-        <button class="btn" @click="enterDomain(pack.id, casesPath(pack))"><i class="fa-solid fa-clapperboard" aria-hidden="true" />Cases</button>
-        <button class="btn" @click="enterDomain(pack.id, '/sim')"><i class="fa-solid fa-sliders" aria-hidden="true" />Lab</button>
-        <a class="btn" href="/rudao"><i class="fa-solid fa-book-open" aria-hidden="true" />《交易入道》</a>
-      </div>
-    </section>
-
-    <!-- 3. Primary knowledge tracks -->
-    <section class="section" aria-labelledby="tracks-title">
-      <div class="section-head">
-        <h2 id="tracks-title">Active Knowledge Tracks · 核心实战专栏</h2>
-        <p class="muted">Each track has its own level ladder, skill cards, concept graph, cases, and lab.</p>
-      </div>
-
-      <div class="tracks-grid">
-        <article
-          v-for="p in DOMAIN_LIST"
-          :key="p.id"
-          class="card track"
-          :class="{ current: app.domain === p.id }"
-          :style="{ '--accent': p.accent }"
-        >
-          <header class="spread">
-            <span class="track-badge"><i :class="['fa-solid', p.icon]" aria-hidden="true" /> {{ p.brand }}</span>
-            <span class="chip">{{ p.levels.length }} Levels · {{ domainTotal(p) }} Quests</span>
-          </header>
-
-          <div class="track-title">
-            <div class="track-names">
-              <h3>{{ p.zhTitle }}</h3>
-              <p class="sub">{{ p.title }}</p>
-              <p class="ja muted">{{ p.jaTitle }}</p>
-            </div>
-            <img :src="mentorSrc(p)" :alt="p.mascot.name" :title="p.mascot.name" class="sticker" />
-          </div>
-
-          <p class="muted desc">{{ p.description }}</p>
-
-          <ul class="hl">
-            <li v-for="h in p.highlights" :key="h"><i class="fa-solid fa-check" aria-hidden="true" />{{ h }}</li>
-          </ul>
-
-          <div class="row cats" aria-label="Categories">
-            <button
-              v-for="c in p.cats.slice(0, 6)"
-              :key="c.id"
-              class="chip mini-chip"
-              :title="`Open ${c.name} cards`"
-              @click="enterDomain(p.id, `/cards?cat=${c.id}`)"
-            >
-              <span class="dot" :style="{ background: c.color }" />{{ c.zh || c.name }}
-            </button>
-            <span v-if="p.cats.length > 6" class="chip mini-chip">+{{ p.cats.length - 6 }} more</span>
-          </div>
-
-          <div class="track-stats">
-            <div><b>{{ p.terms.length }}</b><small>Skill Cards</small></div>
-            <div><b>{{ domainTotal(p) }}</b><small>Decision Quests</small></div>
-            <div><b>{{ casesCount(p) }}</b><small>Cases</small></div>
-          </div>
-
-          <div class="meter-row">
-            <div class="spread small-meta">
-              <span>Track progress</span>
-              <b>{{ domainDone(p) }} / {{ domainTotal(p) }}</b>
-            </div>
-            <div class="meter"><span :style="{ width: ratio(domainDone(p), domainTotal(p)), background: p.accent }" /></div>
-          </div>
-
-          <div class="track-actions">
-            <button class="btn primary" @click="enterDomain(p.id, '/journey')">Enter Journey <i class="fa-solid fa-arrow-right" aria-hidden="true" /></button>
-            <button class="btn" @click="previewBelow(p.id)"><i class="fa-solid fa-eye" aria-hidden="true" />Preview Below</button>
-            <button class="btn" @click="enterDomain(p.id, '/cards')"><i class="fa-solid fa-layer-group" aria-hidden="true" />Cards</button>
-            <button class="btn" @click="enterDomain(p.id, casesPath(p))"><i class="fa-solid fa-clapperboard" aria-hidden="true" />Cases</button>
-            <button class="btn" @click="enterDomain(p.id, '/sim')"><i class="fa-solid fa-sliders" aria-hidden="true" />Lab</button>
-            <a v-if="p.id === 'options'" class="btn" href="/rudao"><i class="fa-solid fa-book-open" aria-hidden="true" />交易入道</a>
-          </div>
-        </article>
-      </div>
-    </section>
-
-    <!-- 4. Interactive domain workbench -->
-    <section id="workbench" class="card workbench" aria-labelledby="wb-title">
-      <div class="spread">
-        <div>
-          <p class="eyebrow">Interactive workbench · {{ pack.brand }}</p>
-          <h2 id="wb-title">{{ pack.zhTitle }} · {{ pack.title }}</h2>
-        </div>
-        <div class="seg" role="group" aria-label="Choose workbench track">
-          <button v-for="p in DOMAIN_LIST" :key="p.id" :class="{ on: app.domain === p.id }" :aria-pressed="app.domain === p.id" @click="previewDomain(p.id)">
-            {{ p.brand }}
-          </button>
-        </div>
-      </div>
-
-      <div class="tabs" role="group" aria-label="Workbench views">
-        <button
-          v-for="t in TABS"
-          :key="t.id"
-          :class="{ on: tab === t.id }"
-          :aria-pressed="tab === t.id"
-          @click="tab = t.id"
-        >
-          <i :class="['fa-solid', t.icon]" aria-hidden="true" /> {{ t.label }} · {{ t.zh }}
-        </button>
-      </div>
-
-      <!-- (a) Level ladder -->
-      <ol v-if="tab === 'ladder'" class="ladder">
-        <li v-for="l in pack.levels" :key="l.n" class="rung" :class="{ done: levelComplete(pack, l.n), now: resume?.level.n === l.n }">
-          <div class="rung-num" aria-hidden="true"><span>L</span>{{ l.n }}</div>
-          <div class="rung-body">
-            <div class="spread rung-title">
-              <h3>{{ l.name }}</h3>
-              <span class="muted small">{{ l.zh }}<template v-if="l.ja"> · {{ l.ja }}</template></span>
-            </div>
-            <p class="muted small">{{ l.blurb }}</p>
-            <div class="row tags">
-              <span v-for="cid in l.cats ?? []" :key="cid" class="chip mini-chip">
-                <span class="dot" :style="{ background: pack.catMap[cid]?.color }" />{{ pack.catMap[cid]?.name ?? cid }}
-              </span>
-            </div>
-            <div class="meter-row">
-              <div class="spread small-meta">
-                <span>{{ levelDone(pack, l.n) }} / {{ levelTotal(pack, l.n) }} quests</span>
-                <span v-if="levelComplete(pack, l.n)"><i class="fa-solid fa-circle-check" aria-hidden="true" /> Complete</span>
-              </div>
-              <div class="meter"><span :style="{ width: ratio(levelDone(pack, l.n), levelTotal(pack, l.n)), background: pack.accent }" /></div>
-            </div>
-          </div>
-          <button
-            class="btn"
-            :class="{ primary: !levelComplete(pack, l.n) }"
-            :disabled="levelTotal(pack, l.n) === 0"
-            @click="enterDomain(pack.id, `/quest/${l.n}/${firstOpen(pack, l.n)}`)"
-          >
-            {{ startLabel(l.n) }} <i class="fa-solid fa-arrow-right" aria-hidden="true" />
-          </button>
-        </li>
-      </ol>
-
-      <!-- (b) Live decision sampler -->
-      <div v-else-if="tab === 'sampler'" class="sampler">
-        <div class="sampler-pick" role="group" aria-label="Sample questions">
-          <button
-            v-for="(s, i) in samples"
-            :key="s.q.id"
-            :class="{ on: i === sampleAt }"
-            :aria-pressed="i === sampleAt"
-            @click="sampleAt = i"
-          >
-            <span class="mono">L{{ s.level }} · Q{{ s.idx + 1 }}</span>
-            <span>{{ s.q.title }}</span>
-          </button>
-        </div>
-
-        <article v-if="sample && step" class="scene">
-          <p class="scenario"><TermText :text="sample.q.scenario" /></p>
-          <p class="step-meta muted">Step {{ stepIdx + 1 }} of {{ sample.q.steps.length }}</p>
-          <h3 class="step-prompt"><TermText :text="step.prompt" /></h3>
-
-          <div class="choices">
-            <button
-              v-for="(c, i) in step.choices"
-              :key="c.id"
-              class="choice"
-              :class="choiceState(c.id)"
-              :disabled="!!pickedId"
-              @click="choose(c.id)"
-            >
-              <span class="letter">{{ letter(i) }}</span>
-              <span>{{ c.label }}</span>
-            </button>
-          </div>
-
-          <div v-if="pickedId" class="verdict" :class="verdictOk ? 'ok' : 'no'" role="status">
-            <strong>
-              <i :class="['fa-solid', verdictOk ? 'fa-circle-check' : 'fa-circle-xmark']" aria-hidden="true" />
-              {{ verdictOk ? 'Correct' : 'Incorrect' }}
-            </strong>
-            <p v-if="!verdictOk" class="small muted">The answer is {{ answerLabel }}.</p>
-            <p class="why"><TermText :text="step.why" /></p>
-          </div>
-
-          <div class="scene-actions">
-            <button v-if="pickedId && stepIdx < sample.q.steps.length - 1" class="btn" @click="nextStep">
-              Next step <i class="fa-solid fa-arrow-right" aria-hidden="true" />
-            </button>
-            <button class="btn primary" @click="enterDomain(pack.id, `/quest/${sample.level}/${sample.idx}`)">
-              Open Full Quest <i class="fa-solid fa-arrow-right" aria-hidden="true" />
-            </button>
-            <button class="btn" @click="askTutor">
-              <i class="fa-solid fa-comments" aria-hidden="true" />Ask AI Tutor
-            </button>
-          </div>
-        </article>
-        <p v-else class="muted">No sample questions in this track yet.</p>
-      </div>
-
-      <!-- (c) Featured trilingual cards -->
-      <div v-else class="tcards">
-        <article v-for="t in featured" :key="t.id" class="tcard" :style="{ '--c': pack.catMap[t.cat]?.color ?? 'var(--edge)' }">
-          <button class="tcard-open" :aria-label="`Open card: ${t.name}`" @click="app.openTerm = t.id">
-            <span class="cat-tag" :style="{ background: pack.catMap[t.cat]?.color }">
-              <i v-if="pack.catMap[t.cat]" :class="['fa-solid', pack.catMap[t.cat].icon ?? 'fa-circle']" aria-hidden="true" />
-              {{ pack.catMap[t.cat]?.name ?? t.cat }}
+  <div class="wrap landing-nexus">
+    <!-- 1. SCI-FI COGNITIVE NEXUS HEADER & 4-PERSONA GATEWAY (J / S / T / D) -->
+    <section class="surface gateway-hero">
+      <div class="gateway-top">
+        <div class="gateway-title-col">
+          <div class="eyebrow-row">
+            <span class="sci-badge">
+              <i class="fa-solid fa-satellite" aria-hidden="true" />
+              JSTD · COGNITIVE NEXUS // ORBITAL RESEARCH DECK
             </span>
-            <span class="tname">{{ t.name }}</span>
-            <span class="tzj muted small">{{ t.zh }}<template v-if="t.ja"> · {{ t.ja }}</template></span>
-            <span class="tshort">{{ plain(t.short) }}</span>
-            <code v-if="t.formula" class="formula">{{ t.formula }}</code>
-          </button>
-          <div class="row related">
-            <button v-for="r in t.related.slice(0, 3)" :key="r" class="chip" @click="app.openTerm = r">{{ termName(pack, r) }}</button>
+            <span class="open-badge">
+              <i class="fa-solid fa-unlock-keyhole" aria-hidden="true" />
+              OPEN ACCESS · 免认证直接进入
+            </span>
+          </div>
+          <h1>星际认知与高维推演研究基地 · J / S / T / D</h1>
+          <p class="lead">
+            选择你的<strong>研究舱人物代号（J · S · T · D）</strong>。当前基地汇聚
+            <b>Options 期权</b>、<b>Director 导演</b>、<b>Comics 漫画</b>、<b>Trading 交易入道</b>
+            四大主体资源集合，拆解为 <b>{{ nexus.allTopics.value.length }} 个可插拔微课题（Micro-Topics）</b>。
+            勾选感兴趣的小课题，即可生成每个人物专属的 Landing Page 学习清单。
+          </p>
+        </div>
+
+        <div class="gateway-Quick-stats">
+          <div class="stat-orb">
+            <small>ACTIVE EXPLORER</small>
+            <b>{{ nexus.state.activePersona }} · {{ nexus.activePersona.value.codename }}</b>
+            <span>{{ nexus.activePersona.value.titleZh }}</span>
+          </div>
+          <div class="stat-grid-mini">
+            <div>
+              <b>4</b>
+              <small>主体资源集合</small>
+            </div>
+            <div>
+              <b>{{ nexus.allTopics.value.length }}</b>
+              <small>可选小课题</small>
+            </div>
+            <div>
+              <b>{{ personaStats[nexus.state.activePersona].total }}</b>
+              <small>当前人物清单</small>
+            </div>
+            <div>
+              <b>{{ personaStats[nexus.state.activePersona].done }}</b>
+              <small>已攻克课题</small>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 4 PERSONA SELECTOR CARDS (J, S, T, D) -->
+      <div class="persona-grid" role="radiogroup" aria-label="Select Research Persona (J, S, T, D)">
+        <article
+          v-for="p in PERSONA_LIST"
+          :key="p.id"
+          :class="['persona-card', { active: nexus.state.activePersona === p.id }]"
+          :style="{ '--p-accent': p.accent, '--p-soft': p.accentSoft }"
+          role="radio"
+          :aria-checked="nexus.state.activePersona === p.id"
+          tabindex="0"
+          @click="selectPersona(p.id)"
+          @keydown.enter.prevent="selectPersona(p.id)"
+          @keydown.space.prevent="selectPersona(p.id)"
+        >
+          <div class="p-card-top">
+            <div class="p-emblem">
+              <span class="p-letter">{{ p.id }}</span>
+              <i :class="['fa-solid', p.icon]" aria-hidden="true" />
+            </div>
+            <div class="p-meta">
+              <span class="p-sector">{{ p.sectorCode }}</span>
+              <h2>{{ nexus.getPersonaProfile(p.id).codename }}</h2>
+              <p class="p-zh">{{ nexus.getPersonaProfile(p.id).titleZh }}</p>
+            </div>
+            <span v-if="nexus.state.activePersona === p.id" class="active-indicator">
+              <i class="fa-solid fa-circle-check" aria-hidden="true" /> 当前舱位
+            </span>
+          </div>
+
+          <p class="p-tagline">{{ nexus.getPersonaProfile(p.id).tagline }}</p>
+
+          <div class="p-focus-tags">
+            <span v-for="f in p.researchFocus" :key="f" class="focus-chip">{{ f }}</span>
+          </div>
+
+          <div class="p-subjects-row">
+            <span class="subj-label">核心主体:</span>
+            <span
+              v-for="sid in p.primarySubjects"
+              :key="sid"
+              class="subj-mini-pill"
+              :style="{ '--s-accent': SUBJECT_COLLECTIONS[sid].accent }"
+            >
+              <i :class="['fa-solid', SUBJECT_COLLECTIONS[sid].icon]" aria-hidden="true" />
+              {{ SUBJECT_COLLECTIONS[sid].titleZh.split('·')[0] }}
+            </span>
+          </div>
+
+          <div class="p-telemetry">
+            <div class="p-tele-row">
+              <span>
+                <i class="fa-solid fa-list-check" aria-hidden="true" />
+                专属清单: <b>{{ personaStats[p.id].total }}</b> 个小课题
+              </span>
+              <span>已完成 {{ personaStats[p.id].done }} ({{ personaStats[p.id].pct }}%)</span>
+            </div>
+            <div class="p-bar">
+              <i :style="{ width: personaStats[p.id].pct + '%' }" />
+            </div>
           </div>
         </article>
       </div>
     </section>
 
-    <!-- 5. Sim4Comics deep-dive architecture matrix -->
-    <section class="section" aria-labelledby="comics-title">
-      <div class="spread section-head">
-        <div>
-          <p class="eyebrow">Sim4Comics · new track</p>
-          <h2 id="comics-title">Three pillars of manga decision craft · 漫画分镜三大支柱</h2>
-          <p class="muted">Theory, decision engine and studio tooling, with direct links into the matching levels.</p>
+    <!-- 2. ACTIVE PERSONA'S CUSTOMIZED LANDING PAGE CHECKLIST -->
+    <section class="surface checklist-deck" :style="{ '--deck-accent': nexus.activePersona.value.accent }">
+      <header class="checklist-header">
+        <div class="deck-identity">
+          <FoxSticker :pose="nexus.activePersona.value.mascotPose" :size="68" />
+          <div>
+            <div class="deck-kicker">
+              <span class="persona-badge-lg">{{ nexus.state.activePersona }}</span>
+              <span class="deck-sector">{{ nexus.activePersona.value.sectorCode }}</span>
+            </div>
+            <h2>
+              {{ nexus.activePersona.value.codename }} · 专属首页课题清单
+              <small>（{{ nexus.activePersona.value.titleZh }}）</small>
+            </h2>
+            <p class="muted">
+              当前清单共勾选 <b>{{ nexus.activeChecklistTopics.value.length }}</b> 个小课题，已完成
+              <b>{{ personaStats[nexus.state.activePersona].done }}</b> 个。勾选左侧方框标记完成，点击「移出」或下方课题库随时增删。
+            </p>
+          </div>
         </div>
-        <div class="row">
-          <button class="btn primary" @click="enterDomain('comics', '/journey')">Explore Sim4Comics <i class="fa-solid fa-arrow-right" aria-hidden="true" /></button>
-          <button class="btn" @click="enterDomain('comics', '/sim?domain=comics')"><i class="fa-solid fa-sliders" aria-hidden="true" />Koma &amp; JEV Lab</button>
+
+        <div class="deck-actions">
+          <button class="btn primary" type="button" @click="scrollToLibrary">
+            <i class="fa-solid fa-plus-minus" aria-hidden="true" /> 勾选 / 管理小课题 ({{ nexus.allTopics.value.length }})
+          </button>
+          <button class="btn" type="button" @click="showCustomForm = !showCustomForm">
+            <i class="fa-solid fa-folder-plus" aria-hidden="true" /> 新增自定义课题
+          </button>
+          <button class="btn" type="button" @click="openPersonaEditor">
+            <i class="fa-solid fa-pen-ruler" aria-hidden="true" /> 自定义舱位名
+          </button>
+          <button class="btn" type="button" title="恢复当前人物的推荐课题清单" @click="nexus.resetPersonaChecklist()">
+            <i class="fa-solid fa-rotate-left" aria-hidden="true" /> 恢复推荐清单
+          </button>
+        </div>
+      </header>
+
+      <!-- INLINE PERSONA CODENAME EDITOR -->
+      <div v-if="showPersonaEdit" class="inline-drawer">
+        <div class="drawer-head">
+          <b><i class="fa-solid fa-user-astronaut" aria-hidden="true" /> 自定义人物 [{{ nexus.state.activePersona }}] 的科幻研究代号与方向描述</b>
+          <button class="btn-sm" type="button" @click="showPersonaEdit = false">关闭</button>
+        </div>
+        <div class="drawer-form-grid">
+          <label>
+            <span>科幻英文代号 (Sci-Fi Codename)</span>
+            <input v-model="personaEditForm.codename" type="text" placeholder="e.g. JOVIAN OBSERVER" />
+          </label>
+          <label>
+            <span>中文研究院名称 (Chinese Title)</span>
+            <input v-model="personaEditForm.titleZh" type="text" placeholder="e.g. 木星观测者 · 概率与高维博弈研究院" />
+          </label>
+          <label class="full-span">
+            <span>研究兴趣与课题简介 (Research Tagline)</span>
+            <input v-model="personaEditForm.tagline" type="text" />
+          </label>
+        </div>
+        <div class="drawer-foot">
+          <button class="btn primary" type="button" @click="savePersonaEditor">保存代号设置</button>
+          <button class="btn" type="button" @click="resetPersonaName">恢复默认科幻代号</button>
         </div>
       </div>
 
-      <div class="matrix">
-        <article v-for="pl in COMICS_PILLARS" :key="pl.no" class="card pillar" :style="{ '--c': pl.accent }">
-          <div class="spread">
-            <span class="pillar-no">{{ pl.no }}</span>
-            <i :class="['fa-solid', pl.icon, 'pillar-ico']" aria-hidden="true" />
-          </div>
-          <h3>{{ pl.title }}</h3>
-          <p class="muted">{{ pl.blurb }}</p>
+      <!-- INLINE CUSTOM MICRO-TOPIC CREATOR -->
+      <div v-if="showCustomForm" class="inline-drawer">
+        <div class="drawer-head">
+          <b><i class="fa-solid fa-folder-plus" aria-hidden="true" /> 新增自定义小课题（自动加入当前人物 [{{ nexus.state.activePersona }}] 清单与总课题库）</b>
+          <button class="btn-sm" type="button" @click="showCustomForm = false">关闭</button>
+        </div>
+        <div class="drawer-form-grid">
+          <label>
+            <span>所属主体集合 (Subject Collection)</span>
+            <select v-model="customForm.subject">
+              <option value="options">Options · 期权与波动率博弈</option>
+              <option value="director">Director · 导演调度与视听场域</option>
+              <option value="comics">Comics · 漫画分镜与 JEV 决策工程</option>
+              <option value="trading">Trading · 交易入道与实战体系</option>
+            </select>
+          </label>
+          <label>
+            <span>课题编号 (Code, 可选)</span>
+            <input v-model="customForm.code" type="text" placeholder="例如 TRD-CUSTOM-01 / COM-LAB-04" />
+          </label>
+          <label>
+            <span>小课题名称 (Title, 必填)</span>
+            <input v-model="customForm.title" type="text" placeholder="例如：0DTE 末日期权 Gamma Scalping 实战笔记" />
+          </label>
+          <label>
+            <span>英文或副标题 (Subtitle, 可选)</span>
+            <input v-model="customForm.titleEn" type="text" placeholder="0DTE Gamma Scalping Execution Notes" />
+          </label>
+          <label class="full-span">
+            <span>课题核心内容描述 (Summary)</span>
+            <input v-model="customForm.summary" type="text" placeholder="简述该课题要研究的核心问题、检验清单或参考资料..." />
+          </label>
+          <label>
+            <span>跳转路径或外部链接 (Target URL / Path, 可选)</span>
+            <input v-model="customForm.href" type="text" placeholder="/rudao 或 /sim?domain=options 或 https://..." />
+          </label>
+          <label>
+            <span>标签 (Tags, 逗号分隔)</span>
+            <input v-model="customForm.tagsText" type="text" placeholder="Gamma, 0DTE, 实盘SOP" />
+          </label>
+        </div>
+        <div class="drawer-foot">
+          <button class="btn primary" type="button" @click="submitCustomTopic">
+            <i class="fa-solid fa-check" aria-hidden="true" /> 创建并加入 [{{ nexus.state.activePersona }}] 清单
+          </button>
+        </div>
+      </div>
 
-          <div class="row chips">
-            <button v-for="id in pl.terms" :key="id" class="chip" @click="app.openTerm = id">{{ termName(COMICS, id) }}</button>
-          </div>
+      <!-- CHECKLIST FILTER BAR -->
+      <div class="checklist-toolbar">
+        <div class="filter-pills" role="tablist" aria-label="Filter checklist by subject">
+          <button
+            type="button"
+            :class="['f-pill', { active: checklistSubjectFilter === 'all' }]"
+            @click="checklistSubjectFilter = 'all'"
+          >
+            全部主体 ({{ nexus.activeChecklistTopics.value.length }})
+          </button>
+          <button
+            v-for="s in SUBJECT_LIST"
+            :key="s.id"
+            type="button"
+            :class="['f-pill', { active: checklistSubjectFilter === s.id }]"
+            :style="{ '--s-color': s.accent }"
+            @click="checklistSubjectFilter = s.id"
+          >
+            <i :class="['fa-solid', s.icon]" aria-hidden="true" />
+            {{ s.titleZh.split('·')[0] }} ({{ checklistCountBySubject[s.id] }})
+          </button>
+        </div>
 
-          <div class="row acts">
+        <div class="status-pills">
+          <button
+            type="button"
+            :class="['s-pill', { active: checklistStatusFilter === 'all' }]"
+            @click="checklistStatusFilter = 'all'"
+          >
+            全部
+          </button>
+          <button
+            type="button"
+            :class="['s-pill', { active: checklistStatusFilter === 'todo' }]"
+            @click="checklistStatusFilter = 'todo'"
+          >
+            待攻克
+          </button>
+          <button
+            type="button"
+            :class="['s-pill', { active: checklistStatusFilter === 'done' }]"
+            @click="checklistStatusFilter = 'done'"
+          >
+            已完成 ({{ personaStats[nexus.state.activePersona].done }})
+          </button>
+        </div>
+      </div>
+
+      <!-- CHECKLIST ITEMS GRID -->
+      <div v-if="filteredChecklist.length" class="checklist-grid">
+        <article
+          v-for="(topic, idx) in filteredChecklist"
+          :key="topic.id"
+          :class="['check-card', { completed: isTopicCompleted(topic) }]"
+          :style="{ '--subj-accent': SUBJECT_COLLECTIONS[topic.subject].accent, '--subj-soft': SUBJECT_COLLECTIONS[topic.subject].accentSoft }"
+        >
+          <div class="check-card-top">
             <button
-              v-for="n in pl.levels"
-              :key="n"
-              class="btn"
-              :disabled="COMICS.bank[n]?.length === 0"
-              @click="enterDomain('comics', `/quest/${n}/${firstOpen(COMICS, n)}`)"
+              type="button"
+              :class="['done-checkbox', { checked: isTopicCompleted(topic) }]"
+              :title="isTopicCompleted(topic) ? '标记为未完成' : '勾选标记该课题已完成'"
+              @click="nexus.toggleDone(topic.id)"
             >
-              L{{ n }} · {{ COMICS.levels.find((l) => l.n === n)?.name }}
+              <i :class="['fa-solid', isTopicCompleted(topic) ? 'fa-square-check' : 'fa-square']" aria-hidden="true" />
+              <span>{{ isTopicCompleted(topic) ? '已完成' : '待学习' }}</span>
+            </button>
+
+            <div class="check-badges">
+              <span class="subj-tag">
+                <i :class="['fa-solid', SUBJECT_COLLECTIONS[topic.subject].icon]" aria-hidden="true" />
+                {{ SUBJECT_COLLECTIONS[topic.subject].brand }}
+              </span>
+              <span class="code-tag">{{ topic.code }}</span>
+              <span class="kind-tag">{{ KIND_LABELS[topic.kind] }}</span>
+            </div>
+
+            <div class="check-item-ops">
+              <button
+                v-if="checklistSubjectFilter === 'all' && checklistStatusFilter === 'all' && idx > 0"
+                type="button"
+                class="op-icon"
+                title="上移优先级"
+                @click="nexus.movePin(topic.id, -1)"
+              >
+                <i class="fa-solid fa-arrow-up" aria-hidden="true" />
+              </button>
+              <button
+                v-if="checklistSubjectFilter === 'all' && checklistStatusFilter === 'all' && idx < filteredChecklist.length - 1"
+                type="button"
+                class="op-icon"
+                title="下移优先级"
+                @click="nexus.movePin(topic.id, 1)"
+              >
+                <i class="fa-solid fa-arrow-down" aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                class="op-remove"
+                title="从当前人物首页清单中移出该课题"
+                @click="nexus.unpinTopic(topic.id)"
+              >
+                <i class="fa-solid fa-xmark" aria-hidden="true" /> 移出
+              </button>
+            </div>
+          </div>
+
+          <div class="check-card-body" @click="openTopic(topic)">
+            <h3>{{ topic.title }}</h3>
+            <p class="en-sub">{{ topic.titleEn }}</p>
+            <p class="summary-txt">{{ topic.summary }}</p>
+          </div>
+
+          <div class="check-card-foot">
+            <div class="metric-info">
+              <template v-if="getTopicLiveProgress(topic)">
+                <span class="live-prog-pill">
+                  <i class="fa-solid fa-bolt" aria-hidden="true" />
+                  闯关进度: {{ getTopicLiveProgress(topic)!.done }}/{{ getTopicLiveProgress(topic)!.total }} ({{ getTopicLiveProgress(topic)!.pct }}%)
+                </span>
+              </template>
+              <template v-else>
+                <span class="metric-pill">{{ topic.metrics }}</span>
+              </template>
+            </div>
+
+            <button type="button" class="launch-btn" @click="openTopic(topic)">
+              <span>进入课题</span>
+              <i class="fa-solid fa-arrow-right" aria-hidden="true" />
+            </button>
+          </div>
+        </article>
+      </div>
+
+      <div v-else class="empty-checklist">
+        <FoxSticker pose="study" :size="64" />
+        <div>
+          <h3>当前筛选下暂无课题</h3>
+          <p class="muted">
+            你可以点击下方「全量知识小课题总库」勾选任意感兴趣的课题加入
+            <b>{{ nexus.state.activePersona }} · {{ nexus.activePersona.value.codename }}</b>
+            的专属清单，或一键恢复默认推荐清单。
+          </p>
+          <div class="empty-actions">
+            <button class="btn primary" type="button" @click="scrollToLibrary">去课题库勾选添加</button>
+            <button class="btn" type="button" @click="nexus.resetPersonaChecklist()">恢复默认推荐清单</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3. FOUR CORE SUBJECT RESOURCE COLLECTIONS (OPTIONS / DIRECTOR / COMICS / TRADING) -->
+    <section class="subjects-section">
+      <div class="sec-head">
+        <div>
+          <span class="sec-kicker">FOUR CORE KNOWLEDGE COLLECTIONS · 四大主体学习资源集合</span>
+          <h2>Options · Director · Comics · 交易（Trading）</h2>
+        </div>
+        <p class="muted">每个主体是一个独立完整的学习资源集合，既可直接进入主线，也可按小课题拆解勾选进人物清单</p>
+      </div>
+
+      <div class="subjects-grid">
+        <article
+          v-for="s in SUBJECT_LIST"
+          :key="s.id"
+          class="surface subject-card"
+          :style="{ '--s-accent': s.accent, '--s-soft': s.accentSoft }"
+        >
+          <div class="subject-head">
+            <div class="subject-icon">
+              <i :class="['fa-solid', s.icon]" aria-hidden="true" />
+            </div>
+            <div class="subject-titles">
+              <span class="subject-code">{{ s.sciFiDeck }}</span>
+              <h3>{{ s.brand }} · {{ s.titleZh }}</h3>
+              <small>{{ s.titleEn }}</small>
+            </div>
+          </div>
+
+          <p class="subject-summary">{{ s.summary }}</p>
+
+          <div class="subject-quick-links">
+            <button
+              v-for="ql in s.quickLinks"
+              :key="ql.href"
+              type="button"
+              class="q-link-btn"
+              @click="openCollectionLink(ql.href, s.domain, ql.external)"
+            >
+              <i :class="['fa-solid', ql.icon]" aria-hidden="true" />
+              <span>{{ ql.label }}</span>
+            </button>
+          </div>
+
+          <div class="subject-foot">
+            <span class="pinned-stat">
+              已选入 <b>{{ nexus.state.activePersona }}</b> 清单:
+              <strong>{{ checklistCountBySubject[s.id] }} / {{ catalogCountBySubject[s.id] }}</strong> 个小课题
+            </span>
+            <button type="button" class="btn-filter-subj" @click="filterCatalogBySubject(s.id)">
+              <i class="fa-solid fa-sliders" aria-hidden="true" /> 挑选题库 ({{ catalogCountBySubject[s.id] }})
             </button>
           </div>
         </article>
       </div>
     </section>
 
-    <!-- 6. Companion handbooks and extensible registry -->
-    <section class="section" aria-labelledby="ext-title">
-      <div class="section-head">
-        <h2 id="ext-title">Companion Handbooks &amp; Extensible Track Registry · 扩展知识矩阵</h2>
-        <p class="muted">
-          Tracks are <code>DomainPack</code> entries in <code>src/domains/registry.ts</code>. A new <code>sim4*</code> track
-          registers its terms, questions, cases, and lab component, and then appears on this page automatically.
-        </p>
+    <!-- 4. GRANULAR MICRO-TOPIC CATALOG & INTERACTIVE PICKER (ADD / REMOVE ANY TOPIC) -->
+    <section id="topic-library-section" class="surface library-section">
+      <header class="library-header">
+        <div>
+          <span class="sec-kicker">GRANULAR MICRO-TOPIC REPOSITORY · 全量小课题总库</span>
+          <h2>勾选感兴趣的小课题 · 组装 [{{ nexus.state.activePersona }} · {{ nexus.activePersona.value.codename }}] 的专属清单</h2>
+          <p class="muted">
+            将四大主体的每一个等级（Level）、每一组概念闪卡（Card Pack）、每一个实战案例（Case）、每一个实验室（Lab）以及《交易入道》全部 25 讲拆解为独立微课题，支持自由勾选添加、移出或新增自定义扩展课题。
+          </p>
+        </div>
+
+        <div class="library-batch-actions">
+          <button class="btn primary" type="button" @click="pinAllFiltered">
+            <i class="fa-solid fa-check-double" aria-hidden="true" /> 全选当前筛选 ({{ filteredCatalogTopics.length }})
+          </button>
+          <button class="btn" type="button" @click="unpinAllFiltered">
+            <i class="fa-solid fa-eraser" aria-hidden="true" /> 移出当前筛选
+          </button>
+          <button class="btn" type="button" @click="showCustomForm = true">
+            <i class="fa-solid fa-plus" aria-hidden="true" /> 新增小课题
+          </button>
+        </div>
+      </header>
+
+      <!-- SUBJECT TABS + KIND PILLS + SEARCH INPUT -->
+      <div class="library-controls">
+        <div class="lib-subj-tabs" role="tablist">
+          <button
+            type="button"
+            :class="['lib-tab', { active: catalogSubject === 'all' }]"
+            @click="catalogSubject = 'all'"
+          >
+            全部主体 ({{ nexus.allTopics.value.length }})
+          </button>
+          <button
+            v-for="s in SUBJECT_LIST"
+            :key="s.id"
+            type="button"
+            :class="['lib-tab', { active: catalogSubject === s.id }]"
+            :style="{ '--s-accent': s.accent }"
+            @click="catalogSubject = s.id"
+          >
+            <i :class="['fa-solid', s.icon]" aria-hidden="true" />
+            {{ s.titleZh.split('·')[0] }} ({{ catalogCountBySubject[s.id] }})
+          </button>
+        </div>
+
+        <div class="lib-kind-row">
+          <div class="kind-pills">
+            <button
+              v-for="[k, label] in ([
+                ['all', '全部类型 All'],
+                ['level', '阶梯闯关 Levels'],
+                ['cards', '概念卡组 Card Packs'],
+                ['case', '实战案例 Cases'],
+                ['lab', '交互实验室 Labs'],
+                ['trading-chapter', '交易入道 25 讲'],
+                ['trading-tool', '交易计算器与汇编'],
+                ['custom', '自定义课题 Custom'],
+              ] as const)"
+              :key="k"
+              type="button"
+              :class="['k-pill', { active: catalogKind === k }]"
+              @click="catalogKind = k"
+            >
+              {{ label }}
+            </button>
+          </div>
+
+          <div class="lib-search">
+            <i class="fa-solid fa-magnifying-glass" aria-hidden="true" />
+            <input
+              v-model="catalogQuery"
+              type="search"
+              placeholder="搜索小课题名称、编号（如 TRD-2.4、JEV、Greeks、五路分兵、鸟山明）..."
+              aria-label="搜索小课题"
+            />
+          </div>
+        </div>
       </div>
 
-      <div class="ext-grid">
-        <a href="/rudao" class="card ext">
-          <span class="chip on"><i class="fa-solid fa-book-bookmark" aria-hidden="true" /> Companion handbook</span>
-          <h3>《交易入道》· 概念术语与实操手册</h3>
-          <p class="muted small">Jesse Lau (@jesselaunz) 闲云九法, a 103-item tweet compendium, option seller and hedging SOPs, and a full reading index.</p>
-          <span class="ext-link">Open handbook (/rudao) <i class="fa-solid fa-arrow-right" aria-hidden="true" /></span>
-        </a>
+      <!-- CATALOG GRID -->
+      <div class="catalog-grid">
+        <article
+          v-for="topic in filteredCatalogTopics"
+          :key="topic.id"
+          :class="['catalog-card', { pinned: nexus.isPinned(topic.id), done: isTopicCompleted(topic) }]"
+          :style="{ '--subj-accent': SUBJECT_COLLECTIONS[topic.subject].accent, '--subj-soft': SUBJECT_COLLECTIONS[topic.subject].accentSoft }"
+        >
+          <div class="cat-card-head">
+            <button
+              type="button"
+              :class="['pin-toggle-btn', { active: nexus.isPinned(topic.id) }]"
+              @click="nexus.togglePin(topic.id)"
+            >
+              <i :class="['fa-solid', nexus.isPinned(topic.id) ? 'fa-square-check' : 'fa-square-plus']" aria-hidden="true" />
+              <span>{{ nexus.isPinned(topic.id) ? `已在 [${nexus.state.activePersona}] 清单` : `+ 加入 [${nexus.state.activePersona}] 清单` }}</span>
+            </button>
 
-        <RouterLink to="/gallery" class="card ext">
-          <span class="chip on"><i class="fa-solid fa-palette" aria-hidden="true" /> Mascot &amp; outfit studio</span>
-          <h3>Mascot &amp; Outfit Studio · 角色与服装工坊</h3>
-          <p class="muted small">Browse Kon, Hikari, and Sensei Sumi in every pose, and pick an outfit that carries across all tracks.</p>
-          <span class="ext-link">Open studio (/gallery) <i class="fa-solid fa-arrow-right" aria-hidden="true" /></span>
-        </RouterLink>
+            <div class="cat-head-right">
+              <span class="code-tag">{{ topic.code }}</span>
+              <button
+                v-if="topic.isCustom"
+                type="button"
+                class="del-custom-btn"
+                title="永久删除该自定义课题"
+                @click="nexus.deleteCustomTopic(topic.id)"
+              >
+                <i class="fa-solid fa-trash-can" aria-hidden="true" />
+              </button>
+            </div>
+          </div>
 
-        <div v-for="u in UPCOMING_DOMAINS" :key="u.id" class="card ext upcoming">
-          <span class="chip"><i :class="['fa-solid', u.icon]" aria-hidden="true" /> {{ u.brand }} · {{ u.badge }}</span>
-          <h3>{{ u.zhTitle }} · {{ u.subtitle }}</h3>
-          <p class="muted small">{{ u.blurb }}</p>
-          <div class="row chips">
-            <span v-for="pl in u.pillars" :key="pl" class="chip mini-chip">{{ pl }}</span>
+          <div class="cat-card-main" @click="nexus.togglePin(topic.id)">
+            <div class="cat-meta-line">
+              <span class="subj-inline">
+                <i :class="['fa-solid', SUBJECT_COLLECTIONS[topic.subject].icon]" aria-hidden="true" />
+                {{ SUBJECT_COLLECTIONS[topic.subject].titleZh.split('·')[0] }}
+              </span>
+              <span class="kind-inline">{{ KIND_LABELS[topic.kind] }}</span>
+            </div>
+            <h4>{{ topic.title }}</h4>
+            <p class="cat-en">{{ topic.titleEn }}</p>
+            <p class="cat-summary">{{ topic.summary }}</p>
+          </div>
+
+          <div class="cat-card-foot">
+            <span class="cat-metrics">{{ topic.metrics }}</span>
+            <div class="cat-foot-btns">
+              <button
+                type="button"
+                :class="['mini-done-btn', { active: isTopicCompleted(topic) }]"
+                @click.stop="nexus.toggleDone(topic.id)"
+              >
+                <i :class="['fa-solid', isTopicCompleted(topic) ? 'fa-check-circle' : 'fa-circle']" aria-hidden="true" />
+                {{ isTopicCompleted(topic) ? '已掌握' : '标记已学' }}
+              </button>
+              <button type="button" class="mini-open-btn" @click.stop="openTopic(topic)">
+                打开 <i class="fa-solid fa-arrow-up-right-from-square" aria-hidden="true" />
+              </button>
+            </div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <!-- 5. QUICK LIVE DECISION SAMPLER (INSTANT PRACTICE WITHOUT LEAVING PORTAL) -->
+    <section class="surface sampler-section">
+      <div class="sampler-head">
+        <div>
+          <span class="sec-kicker">INSTANT SIMULATION DECK · 首页即时推演试炼台</span>
+          <h2>免跳转即时体验：三大交互题库与三语闪卡抽屉</h2>
+        </div>
+        <div class="sampler-dom-pills">
+          <button
+            v-for="d in DOMAIN_LIST"
+            :key="d.id"
+            type="button"
+            :class="['s-dom-btn', { active: app.domain === d.id }]"
+            :style="{ '--d-accent': d.accent }"
+            @click="app.setDomain(d.id); activeSampleIdx = 0; samplePick = null"
+          >
+            <i :class="['fa-solid', d.icon]" aria-hidden="true" />
+            {{ d.brand }} ({{ d.zhTitle }})
+          </button>
+        </div>
+      </div>
+
+      <div v-if="currentSample" class="sampler-body">
+        <div class="sampler-tabs">
+          <button
+            v-for="(item, idx) in sampleQuests"
+            :key="item.q.id"
+            type="button"
+            :class="['sample-tab', { active: activeSampleIdx === idx }]"
+            @click="activeSampleIdx = idx; samplePick = null"
+          >
+            Level {{ item.level }} · {{ item.q.title }}
+          </button>
+        </div>
+
+        <div class="sample-card">
+          <p class="sample-scenario"><TermText :text="currentSample.q.scenario" /></p>
+          <p v-if="currentSample.q.steps[0]" class="sample-prompt"><b><TermText :text="currentSample.q.steps[0].prompt" /></b></p>
+
+          <div v-if="currentSample.q.steps[0]" class="sample-choices">
+            <button
+              v-for="ch in currentSample.q.steps[0].choices"
+              :key="ch.id"
+              type="button"
+              :class="[
+                'sample-choice',
+                {
+                  picked: samplePick === ch.id,
+                  correct: samplePick && ch.id === currentSample.q.steps[0].answer,
+                  wrong: samplePick === ch.id && ch.id !== currentSample.q.steps[0].answer,
+                },
+              ]"
+              @click="samplePick = ch.id"
+            >
+              <span class="ch-key">{{ ch.id.toUpperCase() }}</span>
+              <span class="ch-txt"><TermText :text="ch.label" /></span>
+            </button>
+          </div>
+
+          <div v-if="samplePick && currentSample.q.steps[0]" class="sample-feedback">
+            <p class="verdict">
+              <i :class="['fa-solid', samplePick === currentSample.q.steps[0].answer ? 'fa-circle-check' : 'fa-circle-info']" />
+              {{ samplePick === currentSample.q.steps[0].answer ? '判断精准！' : `最优解为 ${currentSample.q.steps[0].answer.toUpperCase()}` }}
+            </p>
+            <p class="why-txt"><TermText :text="currentSample.q.steps[0].why || ''" /></p>
+            <div class="sample-links">
+              <RouterLink :to="`/quest/${currentSample.level}/${currentSample.idx}?domain=${app.domain}`" class="btn primary">
+                进入完整关卡 Level {{ currentSample.level }} →
+              </RouterLink>
+            </div>
           </div>
         </div>
       </div>
@@ -586,271 +926,1221 @@ usePageContext(() => ({
 </template>
 
 <style scoped>
-/* Base card: the app's .surface pattern, defined here because style.css has no .card. */
-.card { background: var(--panel); border: 2px solid var(--edge); border-radius: 16px; padding: 1.15rem; box-shadow: var(--shadow); }
+.landing-nexus {
+  display: grid;
+  gap: 1.5rem;
+  padding-top: 1.1rem;
+  padding-bottom: 3rem;
+}
 
-.spread { display: flex; justify-content: space-between; align-items: center; gap: .6rem; flex-wrap: wrap; }
-.eyebrow { margin: 0 0 .3rem; font-size: .74rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
-.small { font-size: .86rem; margin: 0; line-height: 1.55; }
-.small-meta { font-size: .8rem; color: var(--muted); }
-.mono { font-family: ui-monospace, 'SFMono-Regular', Menlo, monospace; font-size: .8rem; }
-.section { margin-bottom: 1.8rem; }
-.section-head { margin-bottom: .9rem; }
-.section-head h2 { margin: 0; font-size: 1.4rem; }
-.section-head p { margin: .2rem 0 0; font-size: .92rem; }
-.landing :deep(code) { font-size: .85em; background: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 0 .3rem; }
+/* 1. Gateway Hero & 4-Persona Cards */
+.gateway-hero {
+  display: grid;
+  gap: 1.25rem;
+  padding: 1.4rem;
+  background: linear-gradient(155deg, #fffdf7 0%, #fff6e5 100%);
+}
 
-/* 1. Masthead */
-.hero {
-  position: relative; overflow: hidden; margin: .8rem 0 1.2rem; padding: 1.9rem clamp(1.1rem, 4vw, 2.4rem);
-  display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(0, .8fr); align-items: center; gap: 1.4rem;
-  border-radius: 20px; box-shadow: 4px 4px 0 var(--edge);
+.gateway-top {
+  display: grid;
+  grid-template-columns: 1.45fr 1fr;
+  gap: 1.2rem;
+  align-items: start;
 }
-.rays { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
-.rays line { stroke: var(--edge); opacity: .07; stroke-linecap: round; }
-.dots {
-  position: absolute; left: -40px; bottom: -40px; width: 260px; height: 200px; pointer-events: none;
-  background: radial-gradient(var(--pop) 2.2px, transparent 2.6px) 0 0 / 12px 12px;
-  -webkit-mask: radial-gradient(circle at 0 100%, #000 30%, transparent 72%); mask: radial-gradient(circle at 0 100%, #000 30%, transparent 72%);
-}
-.copy { position: relative; display: grid; gap: .6rem; justify-items: start; min-width: 0; }
-.copy h1 { margin: 0; }
-.copy .read { margin: 0; color: var(--paper); }
-.totals { margin: .2rem 0 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .5rem; width: 100%; }
-.totals div { padding: .5rem .6rem; background: var(--ink); border: 1.5px solid var(--edge); border-radius: 12px; }
-.totals dt { font-size: .72rem; font-weight: 700; color: var(--muted); }
-.totals dd { margin: 0; font-family: var(--display); font-size: 1.35rem; line-height: 1.1; }
-.global-meter { width: 100%; display: grid; gap: .3rem; }
-.dpills { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: .4rem; }
-.dpill {
-  display: inline-flex; align-items: center; gap: .4rem; padding: .2rem .6rem; font-size: .8rem; font-weight: 700;
-  background: var(--panel); border: 1.5px solid var(--edge); border-radius: 999px;
-}
-.dpill b { font-weight: 800; }
-.meter.mini { width: 56px; height: 8px; border-width: 1px; }
 
-.meter { height: 10px; border: 1.5px solid var(--edge); background: var(--ink); border-radius: 99px; overflow: hidden; }
-.meter span { display: block; height: 100%; background: var(--call); background-image: repeating-linear-gradient(-45deg, transparent 0 5px, rgb(255 255 255 / .3) 5px 9px); transition: width .3s ease; }
+.eyebrow-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
 
-.stage { position: relative; display: grid; justify-items: center; gap: .55rem; min-width: 0; }
-.stage-bubble { margin-bottom: .6rem; max-width: 100%; font-size: .9rem; line-height: 1.45; font-weight: 700; text-align: left; }
-/* Tail points down, toward the mentor. */
-.stage-bubble::before { top: auto; bottom: -14px; left: 34px; transform: none; border-width: 13px 9px 0 9px; border-style: solid; border-color: var(--edge) transparent transparent transparent; }
-.stage-bubble::after { top: auto; bottom: -11px; left: 36px; transform: none; border-width: 10px 7px 0 7px; border-style: solid; border-color: var(--panel) transparent transparent transparent; }
-.stage-img {
-  height: 185px; width: auto; object-fit: contain;
-  filter: drop-shadow(2px 0 0 #fff) drop-shadow(-2px 0 0 #fff) drop-shadow(0 2px 0 #fff) drop-shadow(2px 4px 0 rgb(26 23 18 / .22));
+.sci-badge,
+.open-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.38rem;
+  font-family: var(--mono, monospace);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  padding: 0.22rem 0.65rem;
+  border-radius: 999px;
+  border: 1.5px solid var(--edge);
 }
-.stage-name { margin: 0; font-size: .86rem; text-align: center; }
-.switcher { width: 100%; display: grid; gap: .4rem; }
-.switch {
-  display: flex; align-items: center; gap: .5rem; width: 100%; padding: .45rem .7rem; text-align: left;
-  background: var(--panel); border: 2px solid var(--edge); border-radius: 12px; box-shadow: var(--shadow-sm); font-weight: 800;
-}
-.switch small { font-size: .74rem; color: var(--muted); font-weight: 700; }
-.switch.on { background: var(--pop); }
-.switch:active { transform: translate(2px, 2px); box-shadow: none; }
 
-/* 2. Quick resume */
-.resume {
-  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .8rem 1rem; align-items: center;
-  padding: .9rem 1.1rem; margin-bottom: 1.6rem;
+.sci-badge {
+  background: #1a1712;
+  color: #fde68a;
 }
-.resume-main { display: grid; gap: .1rem; min-width: 0; }
-.resume-title { font-size: 1.05rem; }
-.resume-main .small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.quick { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: .4rem; padding-top: .7rem; border-top: 1.5px dashed var(--line); }
-.quick .btn { padding: .4rem .75rem; font-size: .9rem; }
 
-/* 3. Tracks */
-.tracks-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; }
-.track {
-  display: flex; flex-direction: column; gap: .75rem; min-width: 0;
-  border-top: 6px solid var(--accent, var(--fox)); transition: transform .1s ease, box-shadow .1s ease;
+.open-badge {
+  background: #dcfce7;
+  color: #166534;
 }
-.track:hover { transform: translate(-2px, -2px); box-shadow: 5px 5px 0 var(--edge); }
-.track.current { background: var(--ink); }
-.track-badge {
-  display: inline-flex; align-items: center; gap: .4rem; padding: .24rem .7rem; border-radius: 99px; border: 1.5px solid var(--edge);
-  background: var(--accent); color: #fff; font-weight: 800; font-size: .82rem; box-shadow: var(--shadow-sm);
-}
-.track-title { display: flex; justify-content: space-between; align-items: center; gap: .6rem; }
-.track-names { min-width: 0; }
-.track-names h3 { font-size: 1.35rem; margin: 0; }
-.sub { margin: .15rem 0 0; font-size: .86rem; font-weight: 700; color: var(--paper); }
-.ja { margin: 0; font-size: .78rem; }
-.sticker {
-  width: 72px; height: 72px; flex: none; object-fit: contain; padding: 4px; background: var(--ink);
-  border: 2px solid var(--edge); border-radius: 14px; box-shadow: var(--shadow-sm); transform: rotate(-3deg);
-}
-.desc { margin: 0; font-size: .9rem; line-height: 1.5; }
-.hl { list-style: none; margin: 0; padding: 0; display: grid; gap: .3rem; font-size: .84rem; line-height: 1.45; }
-.hl li { display: flex; gap: .45rem; align-items: flex-start; }
-.hl i { color: var(--call); margin-top: .2rem; font-size: .75rem; }
-.cats { gap: .3rem; }
-.mini-chip { font-size: .72rem; padding: .12rem .48rem; }
-button.mini-chip:hover { background: color-mix(in srgb, var(--pop) 35%, var(--panel)); }
-.dot { width: .48rem; height: .48rem; border-radius: 50%; display: inline-block; margin-right: .22rem; }
 
-.track-stats {
-  display: grid; grid-template-columns: repeat(3, 1fr); gap: .5rem;
-  padding: .55rem .7rem; background: var(--ink); border: 1.5px solid var(--edge); border-radius: 12px; text-align: center;
+.gateway-title-col h1 {
+  font-family: var(--display);
+  font-size: clamp(1.55rem, 2.7vw, 2.25rem);
+  line-height: 1.15;
+  margin: 0 0 0.55rem;
 }
-.track-stats b { display: block; font-family: var(--display); font-weight: 400; font-size: 1.2rem; }
-.track-stats small { font-size: .72rem; color: var(--muted); font-weight: 700; }
-.meter-row { display: grid; gap: .25rem; }
-.track-actions { display: flex; flex-wrap: wrap; gap: .45rem; margin-top: auto; }
-.track-actions .btn { font-size: .88rem; padding: .42rem .7rem; }
 
-/* 4. Workbench */
-.workbench { display: grid; gap: .9rem; margin-bottom: 1.8rem; }
-.workbench h2 { margin: 0; font-size: 1.3rem; }
-.seg { display: inline-flex; border: 2px solid var(--edge); border-radius: 12px; overflow: hidden; box-shadow: var(--shadow-sm); }
-.seg button { padding: .4rem .75rem; background: var(--panel); border: 0; border-right: 2px solid var(--edge); font-weight: 800; font-size: .86rem; }
-.seg button:last-child { border-right: 0; }
-.seg button.on { background: var(--pop); }
-.tabs { display: flex; flex-wrap: wrap; gap: .4rem; padding-bottom: .7rem; border-bottom: 2px solid var(--edge); }
-.tabs button {
-  padding: .4rem .8rem; border: 2px solid var(--edge); border-radius: 999px; background: var(--panel);
-  font-weight: 800; font-size: .86rem; box-shadow: var(--shadow-sm);
+.lead {
+  margin: 0;
+  font-size: 0.96rem;
+  line-height: 1.6;
+  color: #3f3a32;
 }
-.tabs button.on { background: var(--edge); color: var(--ink); }
-.tabs button:active { transform: translate(1px, 1px); box-shadow: none; }
 
-/* (a) Level ladder */
-.ladder { list-style: none; margin: 0; padding: 0; display: grid; gap: .65rem; }
-.rung {
-  display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; gap: .9rem; align-items: center;
-  padding: .8rem .9rem; background: var(--ink); border: 2px solid var(--edge); border-radius: 14px;
+.gateway-quick-stats {
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.95rem 1.05rem;
+  background: var(--panel);
+  border: 2px solid var(--edge);
+  border-radius: 16px;
+  box-shadow: 3px 3px 0 var(--edge);
 }
-.rung.now { background: color-mix(in srgb, var(--pop) 30%, var(--panel)); box-shadow: var(--shadow-sm); }
-.rung-num {
-  display: grid; place-items: center; align-content: center; width: 64px; height: 64px;
-  background: var(--panel); border: 2px solid var(--edge); border-radius: 14px; box-shadow: var(--shadow-sm);
-  font-family: var(--display); font-size: 1.6rem; line-height: 1;
-}
-.rung-num span { font-size: .72rem; margin-right: 1px; align-self: start; }
-.rung.done .rung-num { background: var(--call); color: #fff; }
-.rung-body { min-width: 0; display: grid; gap: .35rem; }
-.rung-title { align-items: baseline; }
-.rung-title h3 { margin: 0; }
-.rung-body .tags { gap: .3rem; }
-.rung-body .meter-row { gap: .2rem; }
-.rung .btn { white-space: nowrap; }
-.rung .btn:disabled { opacity: .45; }
 
-/* (b) Sampler */
-.sampler { display: grid; gap: .8rem; }
-.sampler-pick { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .5rem; }
-.sampler-pick button {
-  display: grid; gap: .15rem; text-align: left; padding: .55rem .7rem; font-size: .88rem; font-weight: 700; line-height: 1.3;
-  background: var(--panel); border: 2px solid var(--edge); border-radius: 12px;
+.stat-orb {
+  display: grid;
+  gap: 0.15rem;
+  padding-bottom: 0.55rem;
+  border-bottom: 1.5px dashed var(--line);
 }
-.sampler-pick button.on { background: var(--pop); box-shadow: var(--shadow-sm); }
-.scene { display: grid; gap: .7rem; padding: 1rem 1.1rem; background: var(--ink); border: 2px solid var(--edge); border-radius: 14px; }
-.scene .scenario { margin: 0; font-size: 1rem; line-height: 1.7; }
-.step-meta { margin: 0; font-size: .8rem; }
-.step-prompt { margin: 0; font-size: 1.12rem; }
-.choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem; }
-.choice {
-  display: flex; gap: .6rem; align-items: flex-start; text-align: left; padding: .6rem .75rem;
-  background: var(--panel); border: 2px solid var(--edge); border-radius: 12px; box-shadow: var(--shadow-sm);
-  font-weight: 700; line-height: 1.4; transition: transform .08s ease, opacity .15s;
-}
-.choice:hover:not(:disabled) { background: color-mix(in srgb, var(--pop) 30%, var(--panel)); }
-.choice:active:not(:disabled) { transform: translate(2px, 2px); box-shadow: none; }
-.choice:disabled { cursor: default; }
-.choice .letter {
-  flex: none; display: inline-grid; place-items: center; width: 1.6rem; height: 1.6rem;
-  background: var(--ink); border: 2px solid var(--edge); border-radius: 8px; font-family: var(--display); font-size: .8rem;
-}
-.choice.right { background: color-mix(in srgb, var(--call) 18%, var(--panel)); }
-.choice.right .letter { background: var(--call); color: #fff; }
-.choice.wrong { background: color-mix(in srgb, var(--put) 14%, var(--panel)); }
-.choice.wrong .letter { background: var(--put); color: #fff; }
-.choice.dim { opacity: .55; }
-.verdict { display: grid; gap: .35rem; padding: .7rem .85rem; background: var(--panel); border: 2px solid var(--edge); border-radius: 12px; }
-.verdict.ok { border-left: 8px solid var(--call); }
-.verdict.no { border-left: 8px solid var(--put); }
-.verdict strong { display: flex; align-items: center; gap: .4rem; }
-.verdict.ok strong i { color: var(--call); }
-.verdict.no strong i { color: var(--put); }
-.verdict p { margin: 0; }
-.why { font-size: .94rem; line-height: 1.6; }
-.scene-actions { display: flex; flex-wrap: wrap; gap: .45rem; }
 
-/* (c) Featured trilingual cards */
-.tcards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .8rem; }
-.tcard {
-  display: grid; gap: .5rem; align-content: start; padding: .9rem; min-width: 0;
-  background: var(--panel); border: 2px solid var(--edge); border-radius: 14px; box-shadow: var(--shadow-sm);
-  border-top: 6px solid var(--c);
+.stat-orb small {
+  font-family: var(--mono, monospace);
+  font-size: 0.68rem;
+  font-weight: 800;
+  color: var(--fox);
+  letter-spacing: 0.06em;
 }
-.tcard-open {
-  display: grid; gap: .3rem; width: 100%; padding: 0; text-align: left; background: none; border: 0; color: inherit;
-}
-.tcard-open:hover .tname { text-decoration: underline; text-underline-offset: 3px; }
-.tcard-open:focus-visible { outline-offset: 4px; border-radius: 8px; }
-.cat-tag {
-  justify-self: start; display: inline-flex; align-items: center; gap: .3rem; padding: .1rem .5rem;
-  border: 1.5px solid var(--edge); border-radius: 999px; color: #fff; font-size: .72rem; font-weight: 800;
-}
-.tname { font-size: 1.02rem; font-weight: 800; line-height: 1.3; }
-.tzj { line-height: 1.4; }
-.tshort { font-size: .88rem; line-height: 1.5; }
-.formula {
-  justify-self: start; max-width: 100%; overflow-wrap: anywhere; padding: .2rem .45rem; font-size: .8rem;
-  background: var(--ink); border: 1.5px solid var(--edge); border-radius: 8px;
-}
-.related { gap: .3rem; }
-.related .chip { font-size: .74rem; padding: .05rem .5rem; }
 
-/* 5. Sim4Comics matrix */
-.matrix { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .9rem; }
-.pillar { display: grid; gap: .6rem; align-content: start; border-top: 6px solid var(--c); min-width: 0; }
-.pillar-no { font-family: var(--display); font-size: 1.5rem; line-height: 1; color: var(--muted); }
-.pillar-ico { color: var(--c); font-size: 1.2rem; }
-.pillar h3 { margin: 0; font-size: 1.04rem; }
-.pillar p { margin: 0; font-size: .9rem; line-height: 1.6; }
-.pillar .chips { gap: .3rem; }
-.pillar .chip { font-size: .74rem; padding: .08rem .5rem; }
-.pillar .acts { gap: .4rem; margin-top: auto; }
-.pillar .acts .btn { font-size: .84rem; padding: .38rem .65rem; }
-.pillar .acts .btn:disabled { opacity: .45; }
-
-/* 6. Handbooks and registry */
-.ext-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .9rem; }
-.ext { display: grid; gap: .55rem; align-content: start; color: var(--paper); text-decoration: none; min-width: 0; transition: transform .1s ease, box-shadow .1s ease; }
-.ext h3 { font-size: 1.12rem; margin: 0; }
-a.ext:hover { transform: translate(-2px, -2px); box-shadow: 5px 5px 0 var(--edge); }
-.ext-link { font-weight: 800; color: var(--fox); font-size: .88rem; margin-top: auto; }
-.upcoming { border-style: dashed; box-shadow: none; }
-.ext .chips { gap: .3rem; }
-.ext .mini-chip { font-size: .72rem; }
-
-.chips { gap: .35rem; }
-
-@media (max-width: 880px) {
-  .hero { grid-template-columns: 1fr; }
-  .stage { grid-template-columns: auto 1fr; justify-items: start; align-items: end; column-gap: .8rem; }
-  .stage-bubble { grid-column: 2; grid-row: 1; margin: 0 0 .6rem; }
-  .stage-img { grid-column: 1; grid-row: 1 / span 3; height: 130px; }
-  .stage-name { grid-column: 2; grid-row: 2; text-align: left; }
-  .switcher { grid-column: 1 / -1; grid-row: 3; }
-  .tracks-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .tcards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .matrix { grid-template-columns: 1fr; }
+.stat-orb b {
+  font-size: 1.05rem;
+  font-weight: 900;
 }
+
+.stat-orb span {
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.stat-grid-mini {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.45rem;
+  text-align: center;
+}
+
+.stat-grid-mini > div {
+  background: #fff9ec;
+  border: 1.5px solid var(--edge);
+  border-radius: 10px;
+  padding: 0.4rem 0.25rem;
+  display: grid;
+}
+
+.stat-grid-mini b {
+  font-size: 1.05rem;
+  font-weight: 900;
+}
+
+.stat-grid-mini small {
+  font-size: 0.68rem;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+/* 4-Persona Cards */
+.persona-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.9rem;
+}
+
+.persona-card {
+  background: var(--panel);
+  border: 2px solid var(--edge);
+  border-radius: 16px;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 0.7rem;
+  cursor: pointer;
+  box-shadow: 3px 3px 0 var(--edge);
+  transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
+  position: relative;
+}
+
+.persona-card:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 5px 5px 0 var(--edge);
+}
+
+.persona-card.active {
+  background: var(--p-soft, #fff6e0);
+  border-width: 2.5px;
+  box-shadow: 5px 5px 0 var(--p-accent, var(--edge));
+}
+
+.p-card-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+}
+
+.p-emblem {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  border: 2px solid var(--edge);
+  background: var(--p-accent, var(--fox));
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-shadow: 2px 2px 0 var(--edge);
+}
+
+.p-emblem .p-letter {
+  font-family: var(--mono, monospace);
+  font-size: 1.25rem;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.p-emblem i {
+  font-size: 0.68rem;
+  margin-top: 2px;
+  opacity: 0.9;
+}
+
+.p-meta {
+  min-width: 0;
+  flex: 1;
+}
+
+.p-sector {
+  display: block;
+  font-family: var(--mono, monospace);
+  font-size: 0.62rem;
+  font-weight: 800;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}
+
+.p-meta h2 {
+  margin: 0.1rem 0 0;
+  font-size: 1rem;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+}
+
+.p-zh {
+  margin: 0.1rem 0 0;
+  font-size: 0.78rem;
+  font-weight: 800;
+  color: var(--p-accent, var(--fox));
+}
+
+.active-indicator {
+  font-size: 0.68rem;
+  font-weight: 800;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  background: #1a1712;
+  color: #fff;
+  white-space: nowrap;
+}
+
+.p-tagline {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: #3f3a32;
+}
+
+.p-focus-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.focus-chip {
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 0.12rem 0.45rem;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid var(--edge);
+}
+
+.p-subjects-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  font-size: 0.72rem;
+}
+
+.subj-label {
+  font-weight: 800;
+  color: var(--muted);
+}
+
+.subj-mini-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.1rem 0.42rem;
+  border-radius: 999px;
+  border: 1.5px solid var(--edge);
+  background: #fff;
+  font-weight: 800;
+  color: var(--s-accent, var(--ink));
+}
+
+.p-telemetry {
+  display: grid;
+  gap: 0.28rem;
+  padding-top: 0.45rem;
+  border-top: 1.5px dashed var(--line);
+  font-size: 0.74rem;
+}
+
+.p-tele-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+
+.p-bar {
+  height: 7px;
+  background: #ebe3d5;
+  border-radius: 999px;
+  border: 1px solid var(--edge);
+  overflow: hidden;
+}
+
+.p-bar i {
+  display: block;
+  height: 100%;
+  background: var(--p-accent, var(--fox));
+}
+
+/* 2. Active Persona Checklist Deck */
+.checklist-deck {
+  padding: 1.35rem;
+  display: grid;
+  gap: 1rem;
+  border-width: 2.5px;
+}
+
+.checklist-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.deck-identity {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+}
+
+.deck-kicker {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-bottom: 0.2rem;
+}
+
+.persona-badge-lg {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  background: var(--deck-accent, var(--fox));
+  color: #fff;
+  font-family: var(--mono, monospace);
+  font-weight: 900;
+  font-size: 0.9rem;
+  border: 1.5px solid var(--edge);
+}
+
+.deck-sector {
+  font-family: var(--mono, monospace);
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: var(--muted);
+}
+
+.deck-identity h2 {
+  margin: 0;
+  font-size: 1.3rem;
+}
+
+.deck-identity h2 small {
+  font-size: 0.88rem;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.deck-identity p {
+  margin: 0.2rem 0 0;
+  font-size: 0.88rem;
+}
+
+.deck-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+/* Inline Drawer for Custom Topic & Persona Rename */
+.inline-drawer {
+  background: #fff9ec;
+  border: 2px solid var(--edge);
+  border-radius: 14px;
+  padding: 1rem;
+  display: grid;
+  gap: 0.75rem;
+  box-shadow: 3px 3px 0 var(--edge);
+}
+
+.drawer-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.drawer-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.drawer-form-grid label {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
+.drawer-form-grid label.full-span {
+  grid-column: 1 / -1;
+}
+
+.drawer-form-grid input,
+.drawer-form-grid select {
+  padding: 0.45rem 0.65rem;
+  border: 1.5px solid var(--edge);
+  border-radius: 8px;
+  background: #fff;
+  font-size: 0.88rem;
+}
+
+.drawer-foot {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.btn-sm {
+  border: 1.5px solid var(--edge);
+  background: #fff;
+  border-radius: 8px;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.78rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+/* Checklist Toolbar */
+.checklist-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding-bottom: 0.6rem;
+  border-bottom: 2px dashed var(--line);
+}
+
+.filter-pills,
+.status-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.f-pill,
+.s-pill {
+  border: 1.5px solid var(--edge);
+  background: var(--panel);
+  padding: 0.3rem 0.7rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 800;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.f-pill.active,
+.s-pill.active {
+  background: #1a1712;
+  color: #fff;
+}
+
+/* Checklist Cards Grid */
+.checklist-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+  gap: 0.85rem;
+}
+
+.check-card {
+  background: var(--panel);
+  border: 2px solid var(--edge);
+  border-left: 6px solid var(--subj-accent, var(--fox));
+  border-radius: 14px;
+  padding: 0.85rem 0.95rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 0.6rem;
+  box-shadow: 3px 3px 0 var(--edge);
+  transition: transform 0.12s ease;
+}
+
+.check-card:hover {
+  transform: translateY(-2px);
+}
+
+.check-card.completed {
+  background: #f6fbf7;
+  opacity: 0.92;
+}
+
+.check-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.done-checkbox {
+  border: 1.5px solid var(--edge);
+  background: #fff;
+  border-radius: 8px;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 800;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.done-checkbox.checked {
+  background: #dcfce7;
+  color: #166534;
+  border-color: #166534;
+}
+
+.check-badges {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+}
+
+.subj-tag {
+  font-size: 0.7rem;
+  font-weight: 800;
+  padding: 0.1rem 0.42rem;
+  border-radius: 6px;
+  background: var(--subj-soft, #fff3e4);
+  color: var(--subj-accent, var(--ink));
+  border: 1px solid var(--edge);
+}
+
+.code-tag {
+  font-family: var(--mono, monospace);
+  font-size: 0.68rem;
+  font-weight: 800;
+  padding: 0.1rem 0.38rem;
+  border-radius: 5px;
+  background: #1a1712;
+  color: #fff;
+}
+
+.kind-tag {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.check-item-ops {
+  display: flex;
+  align-items: center;
+  gap: 0.22rem;
+}
+
+.op-icon,
+.op-remove {
+  border: 1px solid var(--edge);
+  background: #fff;
+  border-radius: 6px;
+  padding: 0.14rem 0.38rem;
+  font-size: 0.7rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.op-remove:hover {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.check-card-body {
+  cursor: pointer;
+}
+
+.check-card-body h3 {
+  margin: 0;
+  font-size: 0.98rem;
+  line-height: 1.35;
+}
+
+.en-sub {
+  margin: 0.12rem 0 0.3rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.summary-txt {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.48;
+  color: #3f3a32;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.check-card-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  padding-top: 0.45rem;
+  border-top: 1px dashed var(--line);
+}
+
+.live-prog-pill,
+.metric-pill {
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: var(--muted);
+}
+
+.live-prog-pill {
+  color: var(--subj-accent, var(--fox));
+}
+
+.launch-btn {
+  border: 1.5px solid var(--edge);
+  background: var(--pop);
+  padding: 0.25rem 0.65rem;
+  border-radius: 8px;
+  font-size: 0.78rem;
+  font-weight: 800;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.launch-btn:hover {
+  background: var(--subj-accent, var(--fox));
+  color: #fff;
+}
+
+.empty-checklist {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1.5rem;
+  border: 2px dashed var(--line);
+  border-radius: 14px;
+}
+
+.empty-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+}
+
+/* 3. Four Subject Resource Collections */
+.subjects-section {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.sec-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.sec-kicker {
+  font-family: var(--mono, monospace);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  color: var(--fox);
+  text-transform: uppercase;
+}
+
+.sec-head h2 {
+  margin: 0.15rem 0 0;
+  font-size: 1.35rem;
+}
+
+.subjects-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.subject-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 0.8rem;
+  padding: 1.15rem;
+  border-top: 5px solid var(--s-accent, var(--fox));
+}
+
+.subject-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.subject-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: var(--s-soft, #fff3e4);
+  color: var(--s-accent, var(--fox));
+  border: 2px solid var(--edge);
+  display: grid;
+  place-items: center;
+  font-size: 1.15rem;
+  flex-shrink: 0;
+}
+
+.subject-code {
+  display: block;
+  font-family: var(--mono, monospace);
+  font-size: 0.66rem;
+  font-weight: 800;
+  color: var(--s-accent, var(--fox));
+}
+
+.subject-titles h3 {
+  margin: 0.1rem 0;
+  font-size: 1.1rem;
+}
+
+.subject-titles small {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.subject-summary {
+  margin: 0;
+  font-size: 0.86rem;
+  line-height: 1.5;
+  color: #3f3a32;
+}
+
+.subject-quick-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.q-link-btn {
+  border: 1.5px solid var(--edge);
+  background: #fff;
+  border-radius: 9px;
+  padding: 0.3rem 0.6rem;
+  font-size: 0.78rem;
+  font-weight: 800;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.32rem;
+}
+
+.q-link-btn:hover {
+  background: var(--s-soft, var(--pop));
+}
+
+.subject-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  padding-top: 0.55rem;
+  border-top: 1.5px dashed var(--line);
+  font-size: 0.8rem;
+}
+
+.btn-filter-subj {
+  border: 1.5px solid var(--edge);
+  background: var(--s-accent, var(--fox));
+  color: #fff;
+  border-radius: 8px;
+  padding: 0.28rem 0.68rem;
+  font-size: 0.78rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+/* 4. Micro-Topic Library & Picker */
+.library-section {
+  padding: 1.35rem;
+  display: grid;
+  gap: 1rem;
+}
+
+.library-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.library-header h2 {
+  margin: 0.15rem 0 0.25rem;
+  font-size: 1.28rem;
+}
+
+.library-batch-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.library-controls {
+  display: grid;
+  gap: 0.65rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 2px dashed var(--line);
+}
+
+.lib-subj-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.lib-tab {
+  border: 2px solid var(--edge);
+  background: var(--panel);
+  padding: 0.38rem 0.85rem;
+  border-radius: 10px;
+  font-size: 0.84rem;
+  font-weight: 800;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.lib-tab.active {
+  background: var(--s-accent, #1a1712);
+  color: #fff;
+  box-shadow: 2px 2px 0 var(--edge);
+}
+
+.lib-kind-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.kind-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.k-pill {
+  border: 1.5px solid var(--edge);
+  background: #fff;
+  padding: 0.24rem 0.58rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.k-pill.active {
+  background: var(--pop);
+}
+
+.lib-search {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  background: #fff;
+  border: 2px solid var(--edge);
+  border-radius: 10px;
+  padding: 0.3rem 0.65rem;
+  min-width: min(360px, 100%);
+  flex: 1;
+  max-width: 440px;
+}
+
+.lib-search input {
+  border: 0;
+  outline: none;
+  background: transparent;
+  width: 100%;
+  font-size: 0.85rem;
+}
+
+.catalog-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 0.75rem;
+  max-height: 760px;
+  overflow-y: auto;
+  padding: 0.2rem;
+}
+
+.catalog-card {
+  background: #fff;
+  border: 2px solid var(--edge);
+  border-radius: 12px;
+  padding: 0.75rem 0.85rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 0.5rem;
+  transition: background 0.12s;
+}
+
+.catalog-card.pinned {
+  background: var(--subj-soft, #fff8eb);
+  border-color: var(--subj-accent, var(--edge));
+  box-shadow: 2px 2px 0 var(--edge);
+}
+
+.cat-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.pin-toggle-btn {
+  border: 1.5px solid var(--edge);
+  background: #fff;
+  border-radius: 8px;
+  padding: 0.22rem 0.55rem;
+  font-size: 0.75rem;
+  font-weight: 800;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.pin-toggle-btn.active {
+  background: var(--subj-accent, var(--fox));
+  color: #fff;
+}
+
+.cat-head-right {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.del-custom-btn {
+  border: 1px solid #dc2626;
+  background: #fef2f2;
+  color: #dc2626;
+  border-radius: 6px;
+  padding: 0.15rem 0.38rem;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.cat-card-main {
+  cursor: pointer;
+}
+
+.cat-meta-line {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.7rem;
+  font-weight: 800;
+  color: var(--muted);
+  margin-bottom: 0.2rem;
+}
+
+.subj-inline {
+  color: var(--subj-accent, var(--fox));
+}
+
+.cat-card-main h4 {
+  margin: 0;
+  font-size: 0.92rem;
+  line-height: 1.35;
+}
+
+.cat-en {
+  margin: 0.1rem 0 0.25rem;
+  font-size: 0.72rem;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.cat-summary {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.42;
+  color: #4b453c;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.cat-card-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.4rem;
+  padding-top: 0.4rem;
+  border-top: 1px dashed var(--line);
+  font-size: 0.7rem;
+}
+
+.cat-metrics {
+  color: var(--muted);
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cat-foot-btns {
+  display: flex;
+  gap: 0.3rem;
+  flex-shrink: 0;
+}
+
+.mini-done-btn,
+.mini-open-btn {
+  border: 1px solid var(--edge);
+  background: #fff;
+  border-radius: 6px;
+  padding: 0.16rem 0.45rem;
+  font-size: 0.7rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.mini-done-btn.active {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.mini-open-btn:hover {
+  background: var(--pop);
+}
+
+/* 5. Sampler Section */
+.sampler-section {
+  padding: 1.25rem;
+  display: grid;
+  gap: 0.9rem;
+}
+
+.sampler-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+}
+
+.sampler-head h2 {
+  margin: 0.15rem 0 0;
+  font-size: 1.2rem;
+}
+
+.sampler-dom-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.s-dom-btn {
+  border: 2px solid var(--edge);
+  background: var(--panel);
+  padding: 0.32rem 0.75rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 800;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.s-dom-btn.active {
+  background: var(--d-accent, var(--fox));
+  color: #fff;
+}
+
+.sampler-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.65rem;
+}
+
+.sample-tab {
+  border: 1.5px solid var(--edge);
+  background: #fff;
+  padding: 0.28rem 0.65rem;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.sample-tab.active {
+  background: var(--pop);
+}
+
+.sample-card {
+  background: #fffdf8;
+  border: 2px solid var(--edge);
+  border-radius: 12px;
+  padding: 1rem;
+  display: grid;
+  gap: 0.65rem;
+}
+
+.sample-scenario,
+.sample-prompt {
+  margin: 0;
+  line-height: 1.55;
+}
+
+.sample-choices {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.sample-choice {
+  border: 2px solid var(--edge);
+  background: #fff;
+  border-radius: 10px;
+  padding: 0.55rem 0.75rem;
+  text-align: left;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.sample-choice.correct {
+  background: #dcfce7;
+  border-color: #166534;
+}
+
+.sample-choice.wrong {
+  background: #fee2e2;
+  border-color: #991b1b;
+}
+
+.ch-key {
+  font-family: var(--mono, monospace);
+  font-weight: 900;
+  background: var(--pop);
+  border: 1.5px solid var(--edge);
+  border-radius: 6px;
+  padding: 0.05rem 0.38rem;
+}
+
+.sample-feedback {
+  background: #fff8e6;
+  border: 1.5px solid var(--edge);
+  border-radius: 10px;
+  padding: 0.75rem;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.verdict {
+  margin: 0;
+  font-weight: 900;
+}
+
+.why-txt {
+  margin: 0;
+  font-size: 0.86rem;
+}
+
+@media (max-width: 1060px) {
+  .gateway-top {
+    grid-template-columns: 1fr;
+  }
+  .persona-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .subjects-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 640px) {
-  .tracks-grid, .tcards, .ext-grid, .choices, .sampler-pick { grid-template-columns: 1fr; }
-  .totals { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .resume { grid-template-columns: 1fr; }
-  .resume .btn { justify-self: start; }
-  .rung { grid-template-columns: 52px minmax(0, 1fr); }
-  .rung-num { width: 52px; height: 52px; font-size: 1.3rem; }
-  .rung .btn { grid-column: 1 / -1; justify-self: start; }
-  .stage { grid-template-columns: 1fr; justify-items: center; }
-  .stage-bubble, .stage-name, .switcher { grid-column: auto; grid-row: auto; text-align: left; }
-  .stage-img { grid-column: auto; grid-row: auto; height: 150px; }
+  .persona-grid,
+  .drawer-form-grid,
+  .sample-choices {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

@@ -33,7 +33,7 @@ export const useApp = defineStore('app', {
     lang: 'en',
     pageContext: null as ScreenContext | null,
     pinnedContext: null as ScreenContext | null,
-    authed: null as boolean | null,
+    authed: true as boolean | null,
   }),
   getters: {
     levelProgress: (s) => (ids: string[]) => ids.filter((id) => s.results[id]).length,

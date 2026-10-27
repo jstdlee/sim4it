@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { DOMAIN_LIST } from '../lib/content'
+import { PERSONA_LIST, usePersonaNexus } from '../domains/topics'
 import { presets } from '../lib/presets'
 import { plain } from '../lib/api'
 import { useApp } from '../stores/app'
@@ -10,6 +11,7 @@ import type { DomainId } from '../../shared/types'
 type Item = { group: string; icon: string; title: string; sub: string; hay: string; go: () => void }
 
 const app = useApp()
+const nexus = usePersonaNexus()
 const router = useRouter()
 const open = ref(false)
 const q = ref('')
@@ -46,6 +48,34 @@ const index = computed<Item[]>(() => {
     })),
   ]
 
+  for (const p of PERSONA_LIST) {
+    items.push({
+      group: 'Personas & Topics',
+      icon: p.icon,
+      title: `[Persona ${p.id}] ${p.codename} · ${p.titleZh}`,
+      sub: p.tagline,
+      hay: low(`persona ${p.id} ${p.codename} ${p.titleZh} ${p.titleEn} ${p.tagline}`),
+      go: () => {
+        nexus.setPersona(p.id)
+        router.push({ path: '/', query: { persona: p.id } })
+      },
+    })
+  }
+  for (const mt of nexus.allTopics.value) {
+    if (mt.subject === 'trading' || mt.isCustom) {
+      items.push({
+        group: 'Personas & Topics',
+        icon: mt.subject === 'trading' ? 'fa-compass' : 'fa-thumbtack',
+        title: `[${mt.code}] ${mt.title}`,
+        sub: `${mt.titleEn} · ${mt.metrics}`,
+        hay: low(`trading rudao ${mt.code} ${mt.title} ${mt.titleEn} ${mt.summary} ${mt.tags.join(' ')}`),
+        go: () => {
+          if (mt.isExternalPath) window.location.href = mt.href
+          else router.push(mt.href)
+        },
+      })
+    }
+  }
   for (const pack of DOMAIN_LIST) {
     for (const t of pack.terms) {
       items.push({
@@ -128,7 +158,7 @@ const index = computed<Item[]>(() => {
   return items
 })
 
-const LIMIT: Record<string, number> = { Pages: 4, Terms: 7, 'Cases & Moments': 6, Labs: 4, Questions: 8 }
+const LIMIT: Record<string, number> = { 'Personas & Topics': 6, Pages: 4, Terms: 7, 'Cases & Moments': 6, Labs: 4, Questions: 8 }
 
 const results = computed(() => {
   const words = low(q.value).split(/\s+/).filter(Boolean)
@@ -181,7 +211,7 @@ defineExpose({ show })
       <div class="palette" role="dialog" aria-modal="true" aria-label="Search" @keydown="onKey">
         <div class="field">
           <i class="fa-solid fa-magnifying-glass" aria-hidden="true" />
-          <input id="site-search" ref="input" v-model="q" type="search" placeholder="Search Options, Director, Comics terms, quests, cases…" autocomplete="off" spellcheck="false"
+          <input id="site-search" ref="input" v-model="q" type="search" placeholder="Search J/S/T/D personas, Options, Director, Comics, Trading (交易入道) topics…" autocomplete="off" spellcheck="false"
             role="combobox" aria-expanded="true" aria-controls="search-results" :aria-activedescendant="results.length ? `sr-${sel}` : undefined" />
           <kbd>Esc</kbd>
         </div>

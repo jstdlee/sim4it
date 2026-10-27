@@ -67,9 +67,7 @@ export async function handleRudaoRequest(req: Request, env: Env): Promise<Respon
   const authed = await isRudaoAuthenticated(req, env);
 
   if (url.pathname.startsWith("/rudao/api/")) {
-    if (!authed) {
-      return jsonResp({ error: "Unauthorized" }, 401);
-    }
+    // Public access enabled for Rudao knowledge hub
     if (!env.DATABASE_URL) {
       return jsonResp({ error: "DATABASE_URL not configured" }, 500);
     }
@@ -140,12 +138,7 @@ export async function handleRudaoRequest(req: Request, env: Env): Promise<Respon
     return jsonResp({ error: "Not found" }, 404);
   }
 
-  if (!authed) {
-    return new Response(renderLoginHtml(), {
-      status: 200,
-      headers: { "Content-Type": "text/html; charset=utf-8" },
-    });
-  }
+  // Render Rudao MdBook directly without login wall
 
   const respHeaders: Record<string, string> = {
     "Content-Type": "text/html; charset=utf-8",
@@ -625,7 +618,7 @@ function renderMdBookHtml(): string {
   <div id="page-wrapper">
     <header id="menu-bar">
       <div class="menu-left">
-        <a class="menu-btn" href="/" title="返回 Options Quest">← Options Quest</a>
+        <a class="menu-btn" href="/" title="Back to JSTD Cognitive Nexus">← JSTD Nexus</a>
         <button class="menu-btn" data-action="toggle-sidebar" title="显示或隐藏目录">目录 (TOC)</button>
         <button class="menu-btn" data-action="select-chapter" data-id="notes-index">笔记与URL索引 (<span id="topNotesCount">0</span>)</button>
         <button class="menu-btn" data-action="select-chapter" data-id="all-in-one">全文连读</button>
@@ -1377,12 +1370,16 @@ function renderMdBookHtml(): string {
       const params = new URLSearchParams(window.location.search);
       const cardParam = params.get('card') || (window.location.hash ? window.location.hash.slice(1) : '');
       const tabParam = params.get('tab');
+      const trackParam = params.get('track');
       if (tabParam === 'notes-hub') {
         currentChapterId = 'notes-index';
       } else if (tabParam === 'calculators') {
         currentChapterId = 'appendix-calculators';
       } else if (tabParam === 'tweets') {
         currentChapterId = 'appendix-tweets';
+      } else if (trackParam) {
+        const firstInTrack = LEARNING_CARDS.find(c => c.track === trackParam);
+        if (firstInTrack) currentChapterId = firstInTrack.id;
       } else if (cardParam) {
         if (cardParam.startsWith('tw-')) {
           currentChapterId = 'appendix-tweets';

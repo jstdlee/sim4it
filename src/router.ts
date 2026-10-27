@@ -1,8 +1,10 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useApp } from './stores/app'
+import { PERSONAS, usePersonaNexus, type PersonaId } from './domains/topics'
 import type { DomainId } from '../shared/types'
 
 const VALID_DOMAINS: DomainId[] = ['options', 'director', 'comics']
+const VALID_PERSONAS: PersonaId[] = ['J', 'S', 'T', 'D']
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -25,19 +27,26 @@ export const router = createRouter({
     { path: '/sources', component: () => import('./views/Sources.vue') },
     { path: '/gallery', component: () => import('./views/Gallery.vue') },
     { path: '/settings', component: () => import('./views/Settings.vue') },
-    { path: '/login', component: () => import('./views/Login.vue') },
+    { path: '/login', redirect: '/' },
     { path: '/:rest(.*)*', component: () => import('./views/NotFound.vue') },
   ],
 })
 
 router.beforeEach(async (to) => {
   const app = useApp()
+  // No login gate required: Sim4It acts as an open 4-Persona (J/S/T/D) & 4-Subject resource hub
+  app.authed = true
+
+  const qPersona = typeof to.query.persona === 'string' ? (to.query.persona.toUpperCase() as PersonaId) : null
+  if (qPersona && VALID_PERSONAS.includes(qPersona)) {
+    const nexus = usePersonaNexus()
+    nexus.setPersona(qPersona)
+    if (!to.query.domain) {
+      app.setDomain(PERSONAS[qPersona].defaultDomain)
+    }
+  }
+
   if (typeof to.query.domain === 'string' && VALID_DOMAINS.includes(to.query.domain as DomainId)) {
     app.setDomain(to.query.domain as DomainId)
   }
-  if (app.authed === null) {
-    app.authed = await fetch('/api/session').then((r) => r.json()).then((j: any) => !!j.ok).catch(() => true)
-  }
-  if (!app.authed && to.path !== '/login') return { path: '/login', query: to.fullPath === '/' ? {} : { next: to.fullPath } }
-  if (app.authed && to.path === '/login') return '/'
 })

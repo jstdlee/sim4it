@@ -8,16 +8,18 @@ import SearchPalette from './components/SearchPalette.vue'
 import MapModal from './components/MapModal.vue'
 import { useApp } from './stores/app'
 import { useDomainPack, DOMAIN_LIST } from './lib/content'
+import { PERSONA_LIST, usePersonaNexus, type PersonaId } from './domains/topics'
 import type { DomainId } from '../shared/types'
 
 const app = useApp()
+const nexus = usePersonaNexus()
 const pack = useDomainPack()
 const route = useRoute()
 const router = useRouter()
 
 const links = computed<[string, string, string][]>(() => {
   const base: [string, string, string][] = [
-    ['/', 'Portal', 'fa-compass'],
+    ['/', 'Nexus', 'fa-compass'],
     ['/journey', 'Journey', 'fa-route'],
     ['/cards', 'Cards', 'fa-layer-group'],
     ['/map', 'Term Map', 'fa-diagram-project'],
@@ -41,6 +43,17 @@ function switchDomain(id: DomainId) {
   else if (route.path.startsWith('/quest')) router.push('/journey')
 }
 
+function selectPersonaTop(id: PersonaId) {
+  nexus.setPersona(id)
+  const p = nexus.getPersonaProfile(id)
+  app.setDomain(p.defaultDomain)
+  if (route.path !== '/') {
+    router.push({ path: '/', query: { persona: id } })
+  } else {
+    router.replace({ path: '/', query: { persona: id } })
+  }
+}
+
 const top = ref<HTMLElement>(), brand = ref<{ $el: HTMLElement }>(), cluster = ref<HTMLElement>(), measure = ref<HTMLElement>()
 const collapsed = ref(false)
 function fit() {
@@ -59,7 +72,7 @@ onMounted(() => {
   fit()
 })
 onBeforeUnmount(() => ro?.disconnect())
-watch([() => app.authed, () => app.domain], () => nextTick(fit))
+watch([() => app.domain, () => nexus.state.activePersona], () => nextTick(fit))
 
 const drawer = ref(false)
 const menuBtn = ref<HTMLElement>(), panel = ref<HTMLElement>()
@@ -83,8 +96,25 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
       <span>Sim4It</span>
     </RouterLink>
 
-    <!-- Domain Switcher Pill -->
-    <div v-if="app.authed" class="domain-switch" role="tablist" aria-label="Knowledge Track">
+    <!-- J · S · T · D Sci-Fi Persona Switcher Pill -->
+    <div class="persona-top-switch" role="tablist" aria-label="Explorer Persona (J/S/T/D)">
+      <button
+        v-for="p in PERSONA_LIST"
+        :key="p.id"
+        type="button"
+        role="tab"
+        :aria-selected="nexus.state.activePersona === p.id"
+        :class="['persona-top-btn', { on: nexus.state.activePersona === p.id }]"
+        :style="nexus.state.activePersona === p.id ? { background: p.accent, color: '#fff', borderColor: '#1a1712' } : {}"
+        :title="`${p.id} · ${nexus.getPersonaProfile(p.id).codename} (${nexus.getPersonaProfile(p.id).titleZh})`"
+        @click="selectPersonaTop(p.id)"
+      >
+        <b>{{ p.id }}</b>
+      </button>
+    </div>
+
+    <!-- Subject Resource Collection Switcher Pill (Options / Director / Comics / 交易) -->
+    <div class="domain-switch" role="tablist" aria-label="Knowledge Track">
       <button
         v-for="d in DOMAIN_LIST"
         :key="d.id"
@@ -98,11 +128,19 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
         <i :class="['fa-solid', d.icon]" aria-hidden="true" />
         <span>{{ d.brand.replace('Sim4', '') }}</span>
       </button>
+      <a
+        href="/rudao"
+        class="dom-btn rudao-dom-btn"
+        title="Sim4Trading · 交易入道 (25章实战手册 & 五路分兵庙算台)"
+      >
+        <i class="fa-solid fa-compass-drafting" aria-hidden="true" />
+        <span>交易</span>
+      </a>
     </div>
 
-    <nav v-if="app.authed && !collapsed" class="links" aria-label="Main">
+    <nav v-if="!collapsed" class="links" aria-label="Main">
       <RouterLink v-for="[to, label] in links" :key="to" :to="to" class="nav">{{ label }}</RouterLink>
-      <a v-if="app.domain === 'options'" href="/rudao" class="nav">交易入道</a>
+      <a href="/rudao" class="nav">交易入道</a>
     </nav>
     <span v-else class="spacer" />
 
@@ -112,12 +150,11 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
     </div>
 
     <div ref="cluster" class="cluster" role="toolbar" aria-label="App">
-      <a v-if="!app.authed" href="/rudao" class="nav">交易入道</a>
-      <SearchPalette v-if="app.authed" />
+      <SearchPalette />
       <LangPicker />
-      <RouterLink v-if="app.authed" to="/gallery" class="icon-btn" aria-label="Mascot Gallery" title="Mascot Gallery"><i class="fa-solid fa-palette" /></RouterLink>
-      <RouterLink v-if="app.authed" to="/settings" class="icon-btn" aria-label="Settings" title="Settings"><i class="fa-solid fa-gear" /></RouterLink>
-      <button v-if="app.authed && collapsed" ref="menuBtn" class="icon-btn" aria-label="Open menu" title="Menu"
+      <RouterLink to="/gallery" class="icon-btn" aria-label="Mascot Gallery" title="Mascot Gallery"><i class="fa-solid fa-palette" /></RouterLink>
+      <RouterLink to="/settings" class="icon-btn" aria-label="Settings" title="Settings"><i class="fa-solid fa-gear" /></RouterLink>
+      <button v-if="collapsed" ref="menuBtn" class="icon-btn" aria-label="Open menu" title="Menu"
         aria-controls="nav-drawer" :aria-expanded="drawer" @click="drawer = true"><i class="fa-solid fa-bars" /></button>
     </div>
   </header>
@@ -128,6 +165,17 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
         <div class="dhead">
           <img :src="`/${pack.mascot.dir}/wave.webp`" alt="" />
           <button class="icon-btn" aria-label="Close menu" title="Close (Esc)" @click="drawer = false"><i class="fa-solid fa-xmark" /></button>
+        </div>
+        <div class="drawer-domains">
+          <button
+            v-for="p in PERSONA_LIST"
+            :key="p.id"
+            class="chip"
+            :class="{ on: nexus.state.activePersona === p.id }"
+            @click="selectPersonaTop(p.id)"
+          >
+            <b>{{ p.id }}</b> · {{ nexus.getPersonaProfile(p.id).codename }}
+          </button>
         </div>
         <div class="drawer-domains">
           <button
@@ -153,14 +201,27 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
   <main><RouterView v-slot="{ Component, route: r }"><component :is="Component" :key="`${app.domain}:${r.fullPath}`" /></RouterView></main>
   <MapModal />
   <TermSheet />
-  <ChatFloat v-if="app.authed" />
+  <ChatFloat />
 </template>
 
 <style scoped>
-.top { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20; display: flex; gap: 12px; align-items: center; padding: .5rem 1.1rem; background: var(--panel); border-bottom: 2px solid var(--edge); }
+.top { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20; display: flex; gap: 10px; align-items: center; padding: .5rem 1.1rem; background: var(--panel); border-bottom: 2px solid var(--edge); }
 .brand { display: inline-flex; align-items: center; gap: .45rem; flex: none; font-family: var(--display); color: var(--paper); text-decoration: none; font-size: 1.08rem; white-space: nowrap; }
 .brand img { width: 32px; height: 32px; transition: transform .2s; }
 .brand:hover img { transform: rotate(-10deg) scale(1.08); }
+
+.persona-top-switch {
+  display: inline-flex; align-items: center; gap: 2px;
+  padding: 2px; border: 2px solid var(--edge); border-radius: 999px;
+  background: var(--ink); flex: none;
+}
+.persona-top-btn {
+  width: 25px; height: 25px; border-radius: 999px; border: 1.5px solid transparent;
+  background: transparent; color: var(--paper); font-family: var(--mono);
+  font-size: .74rem; font-weight: 900; display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: transform .12s;
+}
+.persona-top-btn:hover { transform: translateY(-1px); background: #fff6dc; }
 
 .domain-switch {
   display: inline-flex; align-items: center; gap: 2px;
@@ -169,11 +230,15 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 }
 .dom-btn {
   display: inline-flex; align-items: center; gap: .3rem;
-  padding: .2rem .6rem; border: 0; border-radius: 999px;
+  padding: .2rem .58rem; border: 0; border-radius: 999px;
   background: transparent; color: var(--muted); font-size: .78rem; font-weight: 800;
+  text-decoration: none;
 }
 .dom-btn.on {
   background: var(--pop); color: var(--paper); box-shadow: 1px 1px 0 var(--edge);
+}
+.rudao-dom-btn:hover {
+  background: #fff6dc; color: var(--paper);
 }
 
 .links { display: flex; gap: .25rem; flex: 1; min-width: 0; padding: 3px 3px 5px; }
@@ -183,7 +248,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 .nav:hover { border-color: var(--edge); }
 .nav.router-link-exact-active { background: var(--pop); border-color: var(--edge); box-shadow: var(--shadow-sm); }
 .cluster { display: flex; align-items: center; gap: 4px; flex: none; }
-@media (max-width: 540px) { .brand span { display: none; } .dom-btn span { display: none; } }
+@media (max-width: 640px) { .brand span { display: none; } .dom-btn span { display: none; } }
 
 .scrim { position: fixed; inset: 0; z-index: 60; background: rgb(26 23 18 / .3); }
 .drawer { position: absolute; top: 0; right: 0; bottom: 0; width: min(310px, 86vw); display: flex; flex-direction: column; gap: .55rem; padding: calc(.8rem + env(safe-area-inset-top, 0px)) .9rem calc(1rem + env(safe-area-inset-bottom, 0px)); background: var(--panel); border-left: 2px solid var(--edge); box-shadow: -4px 0 0 var(--edge); overflow-y: auto; }
