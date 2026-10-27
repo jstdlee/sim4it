@@ -66,6 +66,34 @@ button.chip:hover { background: #fff6dc; }
 .term-link { background: none; border: 0; padding: 0; color: var(--teal); font: inherit; font-weight: 700; text-decoration: underline wavy color-mix(in srgb, var(--teal) 55%, transparent); text-underline-offset: 4px; text-decoration-thickness: 1.5px; }
 .term-link:hover { background: color-mix(in srgb, var(--pop) 60%, transparent); }
 .surface { background: var(--panel); border: 2px solid var(--edge); border-radius: 16px; padding: 1rem; box-shadow: var(--shadow); }
+.card {
+  background: var(--panel);
+  color: var(--paper);
+  border: 2px solid var(--edge);
+  border-radius: 16px;
+  padding: 1rem 1.1rem;
+  box-shadow: var(--shadow-sm);
+}
+button.card {
+  text-align: left;
+  width: 100%;
+  transition: transform .1s ease, box-shadow .1s ease, background .15s ease;
+}
+button.card:hover {
+  background: #fff9ec;
+  transform: translate(-1px, -1px);
+  box-shadow: 4px 4px 0 var(--edge);
+}
+button.card:active {
+  transform: translate(2px, 2px);
+  box-shadow: 0 0 0 var(--edge);
+}
+.spread {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: .5rem;
+}
 input, select, textarea { font: inherit; color: var(--paper); background: var(--panel); border: 2px solid var(--edge); border-radius: 10px; padding: .5rem .65rem; width: 100%; }
 input[type='range'] { accent-color: var(--fox); border: 0; padding: 0; background: none; }
 input[type='checkbox'] { accent-color: var(--fox); }

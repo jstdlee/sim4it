@@ -7,9 +7,8 @@ import LangPicker from './components/LangPicker.vue'
 import SearchPalette from './components/SearchPalette.vue'
 import MapModal from './components/MapModal.vue'
 import { useApp } from './stores/app'
-import { useDomainPack, DOMAIN_LIST } from './lib/content'
+import { useDomainPack } from './lib/content'
 import { PERSONA_LIST, usePersonaNexus, type PersonaId } from './domains/topics'
-import type { DomainId } from '../shared/types'
 
 const app = useApp()
 const nexus = usePersonaNexus()
@@ -36,21 +35,14 @@ const links = computed<[string, string, string][]>(() => {
   return base
 })
 
-function switchDomain(id: DomainId) {
-  app.setDomain(id)
-  if (route.path.startsWith('/moments') && id !== 'options') router.push('/scenes')
-  else if (route.path.startsWith('/scenes') && id === 'options') router.push('/moments')
-  else if (route.path.startsWith('/quest')) router.push('/journey')
-}
-
 function selectPersonaTop(id: PersonaId) {
   nexus.setPersona(id)
   const p = nexus.getPersonaProfile(id)
   app.setDomain(p.defaultDomain)
   if (route.path !== '/') {
-    router.push({ path: '/', query: { persona: id } })
-  } else {
-    router.replace({ path: '/', query: { persona: id } })
+    router.push({ path: '/', query: { step: 'landing' } })
+  } else if (!route.query.step || route.query.step === 'role') {
+    router.replace({ path: '/', query: { step: 'topics' } })
   }
 }
 
@@ -113,31 +105,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
       </button>
     </div>
 
-    <!-- Subject Resource Collection Switcher Pill (Options / Director / Comics / 交易) -->
-    <div class="domain-switch" role="tablist" aria-label="Knowledge Track">
-      <button
-        v-for="d in DOMAIN_LIST"
-        :key="d.id"
-        role="tab"
-        :aria-selected="app.domain === d.id"
-        class="dom-btn"
-        :class="{ on: app.domain === d.id }"
-        :title="`${d.brand} · ${d.zhTitle}`"
-        @click="switchDomain(d.id)"
-      >
-        <i :class="['fa-solid', d.icon]" aria-hidden="true" />
-        <span>{{ d.brand.replace('Sim4', '') }}</span>
-      </button>
-      <a
-        href="/rudao"
-        class="dom-btn rudao-dom-btn"
-        title="Sim4Trading · 交易入道 (25章实战手册 & 五路分兵庙算台)"
-      >
-        <i class="fa-solid fa-compass-drafting" aria-hidden="true" />
-        <span>交易</span>
-      </a>
-    </div>
-
     <nav v-if="!collapsed" class="links" aria-label="Main">
       <RouterLink v-for="[to, label] in links" :key="to" :to="to" class="nav">{{ label }}</RouterLink>
       <a href="/rudao" class="nav">交易入道</a>
@@ -177,17 +144,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
             <b>{{ p.id }}</b> · {{ nexus.getPersonaProfile(p.id).codename }}
           </button>
         </div>
-        <div class="drawer-domains">
-          <button
-            v-for="d in DOMAIN_LIST"
-            :key="d.id"
-            class="chip"
-            :class="{ on: app.domain === d.id }"
-            @click="switchDomain(d.id)"
-          >
-            <i :class="['fa-solid', d.icon]" aria-hidden="true" /> {{ d.brand }}
-          </button>
-        </div>
         <nav aria-label="Main">
           <RouterLink v-for="[to, label, icon] in links" :key="to" :to="to" class="dlink"><i :class="['fa-solid', 'fa-fw', icon]" aria-hidden="true" />{{ label }}</RouterLink>
           <RouterLink to="/gallery" class="dlink"><i class="fa-solid fa-fw fa-palette" aria-hidden="true" />Mascot Gallery</RouterLink>
@@ -198,7 +154,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
     </div>
   </Transition>
 
-  <main><RouterView v-slot="{ Component, route: r }"><component :is="Component" :key="`${app.domain}:${r.fullPath}`" /></RouterView></main>
+  <main><RouterView v-slot="{ Component, route: r }"><component :is="Component" :key="`${app.domain}:${r.path}`" /></RouterView></main>
   <MapModal />
   <TermSheet />
   <ChatFloat />
@@ -216,30 +172,12 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
   background: var(--ink); flex: none;
 }
 .persona-top-btn {
-  width: 25px; height: 25px; border-radius: 999px; border: 1.5px solid transparent;
+  width: 26px; height: 26px; border-radius: 999px; border: 1.5px solid transparent;
   background: transparent; color: var(--paper); font-family: var(--mono);
-  font-size: .74rem; font-weight: 900; display: inline-flex; align-items: center; justify-content: center;
+  font-size: .75rem; font-weight: 900; display: inline-flex; align-items: center; justify-content: center;
   cursor: pointer; transition: transform .12s;
 }
 .persona-top-btn:hover { transform: translateY(-1px); background: #fff6dc; }
-
-.domain-switch {
-  display: inline-flex; align-items: center; gap: 2px;
-  padding: 2px; border: 2px solid var(--edge); border-radius: 999px;
-  background: var(--ink); flex: none;
-}
-.dom-btn {
-  display: inline-flex; align-items: center; gap: .3rem;
-  padding: .2rem .58rem; border: 0; border-radius: 999px;
-  background: transparent; color: var(--muted); font-size: .78rem; font-weight: 800;
-  text-decoration: none;
-}
-.dom-btn.on {
-  background: var(--pop); color: var(--paper); box-shadow: 1px 1px 0 var(--edge);
-}
-.rudao-dom-btn:hover {
-  background: #fff6dc; color: var(--paper);
-}
 
 .links { display: flex; gap: .25rem; flex: 1; min-width: 0; padding: 3px 3px 5px; }
 .spacer { flex: 1; }
@@ -248,7 +186,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 .nav:hover { border-color: var(--edge); }
 .nav.router-link-exact-active { background: var(--pop); border-color: var(--edge); box-shadow: var(--shadow-sm); }
 .cluster { display: flex; align-items: center; gap: 4px; flex: none; }
-@media (max-width: 640px) { .brand span { display: none; } .dom-btn span { display: none; } }
+@media (max-width: 640px) { .brand span { display: none; } }
 
 .scrim { position: fixed; inset: 0; z-index: 60; background: rgb(26 23 18 / .3); }
 .drawer { position: absolute; top: 0; right: 0; bottom: 0; width: min(310px, 86vw); display: flex; flex-direction: column; gap: .55rem; padding: calc(.8rem + env(safe-area-inset-top, 0px)) .9rem calc(1rem + env(safe-area-inset-bottom, 0px)); background: var(--panel); border-left: 2px solid var(--edge); box-shadow: -4px 0 0 var(--edge); overflow-y: auto; }

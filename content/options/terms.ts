@@ -1,21 +1,21 @@
 import type { Term, Category } from '../../shared/types'
 
 export const CATS: Category[] = [
-  { id: "basics", name: "Foundations", zh: "期权基础", ja: "オプション基礎", color: "#ff5a1f" },
-  { id: "pricing", name: "Pricing & Value", zh: "定价与价值", ja: "価格と価値", color: "#e9b949" },
-  { id: "greeks", name: "The Greeks", zh: "希腊字母", ja: "グリークス", color: "#0e8c83" },
-  { id: "volatility", name: "Volatility (IV/HV)", zh: "波动率", ja: "ボラティリティ", color: "#5b8def" },
-  { id: "time", name: "Time & Expiry", zh: "时间与到期", ja: "時間と満期", color: "#c77dff" },
-  { id: "strategy", name: "Strategies", zh: "交易策略", ja: "オプション戦略", color: "#1fa45a" },
-  { id: "spread", name: "Spreads", zh: "价差组合", ja: "スプレッド", color: "#2fb5c5" },
-  { id: "income", name: "Income & Theta", zh: "权利金收益", ja: "インカム戦略", color: "#6dbf4b" },
-  { id: "hedge", name: "Hedging", zh: "对冲保护", ja: "ヘッジ", color: "#3dbe8b" },
-  { id: "risk", name: "Risk & Sizing", zh: "风险控制", ja: "リスク管理", color: "#e8432e" },
-  { id: "management", name: "Trade Management", zh: "持仓管理", ja: "ポジション管理", color: "#f08a5d" },
-  { id: "mechanics", name: "Market Mechanics", zh: "交割与机制", ja: "市場メカニズム", color: "#93a4be" },
-  { id: "market", name: "Order Flow & Liquidity", zh: "流动性与盘口", ja: "流動性と板", color: "#7f9cc0" },
-  { id: "indicator", name: "Technicals & Signals", zh: "技术指标", ja: "テクニカル指標", color: "#8e7cf0" },
-  { id: "events", name: "Catalysts & Earnings", zh: "财报与事件", ja: "イベント・決算", color: "#e0607e" },
+  { id: "basics", name: "Foundations", zh: "期权基础", ja: "オプション基礎", color: "#ff5a1f", icon: "fa-compass", blurb: "Calls, puts, strikes, moneyness, and contract anatomy." },
+  { id: "pricing", name: "Pricing & Value", zh: "定价与价值", ja: "価格と価値", color: "#e9b949", icon: "fa-scale-balanced", blurb: "Intrinsic vs. extrinsic value, parity, and pricing models." },
+  { id: "greeks", name: "The Greeks", zh: "希腊字母", ja: "グリークス", color: "#0e8c83", icon: "fa-sliders", blurb: "Delta, Gamma, Theta, Vega, Rho, and higher-order sensitivities." },
+  { id: "volatility", name: "Volatility (IV/HV)", zh: "波动率", ja: "ボラティリティ", color: "#5b8def", icon: "fa-wave-square", blurb: "Implied vs. realized volatility, skew, term structure, and VIX." },
+  { id: "time", name: "Time & Expiry", zh: "时间与到期", ja: "時間と満期", color: "#c77dff", icon: "fa-hourglass-half", blurb: "DTE decay curves, calendar carry, and expiration dynamics." },
+  { id: "strategy", name: "Strategies", zh: "交易策略", ja: "オプション戦略", color: "#1fa45a", icon: "fa-chess-knight", blurb: "Directional, volatility, and multi-leg option structures." },
+  { id: "spread", name: "Spreads", zh: "价差组合", ja: "スプレッド", color: "#2fb5c5", icon: "fa-layer-group", blurb: "Verticals, debit/credit spreads, iron condors, and butterflies." },
+  { id: "income", name: "Income & Theta", zh: "权利金收益", ja: "インカム戦略", color: "#6dbf4b", icon: "fa-coins", blurb: "Covered calls, cash-secured puts, wheel, and premium harvesting." },
+  { id: "hedge", name: "Hedging", zh: "对冲保护", ja: "ヘッジ", color: "#3dbe8b", icon: "fa-shield-halved", blurb: "Protective puts, collars, tail-risk insurance, and portfolio shields." },
+  { id: "risk", name: "Risk & Sizing", zh: "风险控制", ja: "リスク管理", color: "#e8432e", icon: "fa-triangle-exclamation", blurb: "Max loss, Kelly sizing, margin, assignment, and tail exposure." },
+  { id: "management", name: "Trade Management", zh: "持仓管理", ja: "ポジション管理", color: "#f08a5d", icon: "fa-arrows-rotate", blurb: "Rolling, adjustments, profit targets, and pin-risk defense." },
+  { id: "mechanics", name: "Market Mechanics", zh: "交割与机制", ja: "市場メカニズム", color: "#93a4be", icon: "fa-gears", blurb: "Exercise, assignment, American vs. European settlement, and clearing." },
+  { id: "market", name: "Order Flow & Liquidity", zh: "流动性与盘口", ja: "流動性と板", color: "#7f9cc0", icon: "fa-chart-bar", blurb: "Bid-ask spread, open interest, volume, dealer gamma, and execution." },
+  { id: "indicator", name: "Technicals & Signals", zh: "技术指标", ja: "テクニカル指標", color: "#8e7cf0", icon: "fa-chart-line", blurb: "RSI, moving averages, regime filters, and volatility triggers." },
+  { id: "events", name: "Catalysts & Earnings", zh: "财报与事件", ja: "イベント・決算", color: "#e0607e", icon: "fa-bolt", blurb: "Earnings jumps, expected move, IV crush, and binary catalysts." },
 ]
 export const CAT_MAP: Record<string, Category> = Object.fromEntries(CATS.map((c) => [c.id, c]))
 
@@ -92,5 +92,5 @@ const raw: T[] = [
 
 import { RAW_MORE } from './terms_more'
 
-export const TERMS: Term[] = [...raw, ...RAW_MORE].map(([id, name, short, tags, related, formula, example]) => ({ id, name, short, tags, cat: CAT_MAP[tags[0]] ? tags[0] : (tags.find((x) => CAT_MAP[x]) ?? 'basics'), related, formula, example }))
+export const TERMS: Term[] = [...raw, ...RAW_MORE].map(([id, name, short, tags, related, formula, example]) => ({ id, name, short, tags, cat: (tags[0] === 'strategy' && tags.find((x) => x === 'spread' || x === 'income' || x === 'hedge')) || (CAT_MAP[tags[0]] ? tags[0] : (tags.find((x) => CAT_MAP[x]) ?? 'basics')), related, formula, example }))
 export const TERM_MAP: Record<string, Term> = Object.fromEntries(TERMS.map((t) => [t.id, t]))
